@@ -1,5 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk';
-import type { AgentContext, SessionConfigOption, SessionModeState, SessionUpdate } from '@agentclientprotocol/sdk';
+import type { AgentContext, SessionConfigOption, SessionModeState, SessionUpdate, StopReason } from '@agentclientprotocol/sdk';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { Readable, Writable } from 'node:stream';
@@ -18,6 +18,9 @@ interface FakeSession {
 }
 
 const sessions = new Map<string, FakeSession>();
+
+/** Scenarios that end the turn with something other than end_turn. */
+const STOP_REASONS: Partial<Record<string, StopReason>> = { refuse: 'refusal', 'max-turns': 'max_turn_requests' };
 
 function freshSession(resumed: boolean): FakeSession {
   const session: FakeSession = {
@@ -93,6 +96,11 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
   const say = (chunk: string) => send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: chunk } });
 
   switch (scenario) {
+    case 'empty':
+      return;
+    case 'refuse':
+      await say('I will not do that.');
+      return;
     case 'hang':
       await new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled'))));
       return;
@@ -229,7 +237,7 @@ app
       if (session.pending === controller) session.pending = undefined;
     }
     if (controller.signal.aborted) return { stopReason: 'cancelled' as const };
-    return { stopReason: 'end_turn' as const, usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
+    return { stopReason: STOP_REASONS[scenario] ?? 'end_turn', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
   })
   .onNotification('session/cancel', (ctx) => {
     sessions.get(ctx.params.sessionId)?.pending?.abort();

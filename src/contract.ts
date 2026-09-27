@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { ErrorCode, Usage } from './errors.ts';
 
 // External contract of the MCP tools (DESIGN §3). Input schemas are zod raw shapes for
-// `McpServer.registerTool`; invalid input is rejected by the SDK as a protocol error.
+// `McpServer.registerTool`; invalid input is rejected by the SDK's validation before our code runs.
 // Output types describe the single JSON text block in `content[0].text` (decision-2).
 
 /** Effort suffix of the agent spec (DESIGN §3.1). Anything else after `:` stays part of the model name. */

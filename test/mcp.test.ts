@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { after, describe, it } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import type { ListHarnessesOutput } from '../src/contract.ts';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { ListHarnessesOutput, RunFailure, RunSuccess } from '../src/contract.ts';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'throng-mcp-'));
@@ -32,13 +33,13 @@ after(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** Parent env without THRONG_MCP_* (the tests may themselves run inside a throng session), PATH = `bin`, plus overrides. */
+/** Parent env with THRONG_MCP_* stripped (the tests may run inside a throng session), cache and config redirected to the temp dir, PATH = `bin`, plus overrides. */
 function serverEnv(overrides: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && !key.startsWith('THRONG_MCP_')) env[key] = value;
   }
-  return { ...env, THRONG_MCP_CONFIG: join(dir, 'missing.yaml'), PATH: bin, ...overrides };
+  return { ...env, THRONG_MCP_CONFIG: join(dir, 'missing.yaml'), THRONG_MCP_CACHE_DIR: join(dir, 'cache'), PATH: bin, ...overrides };
 }
 
 /** Unique argv marker for a fake agent the server spawns, so the test can pgrep for leftovers. */
@@ -121,7 +122,7 @@ async function callListHarnesses(env: Record<string, string>): Promise<{ tools: 
 describe('mcp server over stdio', () => {
   it('without adapters on PATH: every harness unavailable with its install hint, default limits', async () => {
     const { tools, out } = await callListHarnesses(serverEnv({}));
-    assert.deepEqual(tools, ['list_harnesses']);
+    assert.deepEqual(tools, ['list_harnesses', 'run_thronglet']);
     assert.deepEqual(out.harnesses, []);
     assertInstallHints(out.unavailable, ['claude', 'codex', 'opencode']);
     assert.deepEqual(out.limits, { max_concurrency: 10, max_depth: 2, default_timeout_s: 21600, current_depth: 0 });
@@ -242,4 +243,105 @@ describe('mcp server over stdio', () => {
       assert.match(stderr, new RegExp(`throng stopping why=${signal}`));
     });
   }
+});
+
+describe('run_thronglet over stdio', () => {
+  /** Server whose `claude` harness is the fake agent in `scenario`; `tag` finds its adapter processes. */
+  async function connect(scenario: string): Promise<{ client: Client; tag: string; close: () => Promise<void> }> {
+    const tag = newTag();
+    const config = writeConfig(
+      `run-${tag}.yaml`,
+      [
+        'harnesses:',
+        '  claude:',
+        `    command: ${JSON.stringify(process.execPath)}`,
+        `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
+        `    env: { FAKE_SCENARIO: ${scenario} }`,
+        '',
+      ].join('\n'),
+    );
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ['src/mcp.ts'],
+      cwd: repo,
+      env: serverEnv({ THRONG_MCP_CONFIG: config }),
+      stderr: 'pipe',
+    });
+    const client = new Client({ name: 'throng-test', version: '0' });
+    await client.connect(transport);
+    return { client, tag, close: () => client.close() };
+  }
+
+  function payloadOf(result: Record<string, unknown>): unknown {
+    const content = result.content as Array<{ type: string; text: string }>;
+    assert.equal(content.length, 1);
+    assert.equal(content[0]?.type, 'text');
+    return JSON.parse(content[0]?.text ?? '');
+  }
+
+  it('success: one JSON text block, isError undefined; model_rejected is a tool error', async () => {
+    const { client, tag, close } = await connect('echo');
+    try {
+      const result = await client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo } });
+      assert.equal(result.isError, undefined);
+      assert.equal(result.structuredContent, undefined);
+      const success = payloadOf(result) as RunSuccess;
+      assert.ok(success.text?.startsWith('echo: '));
+      assert.equal(success.stop_reason, 'end_turn');
+      assert.ok(success.session_id);
+
+      const rejected = await client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/nope', prompt: 'hi', cwd: repo } });
+      assert.equal(rejected.isError, true);
+      const failure = payloadOf(rejected) as RunFailure;
+      assert.equal(failure.code, 'model_rejected');
+      assert.ok(failure.session_id);
+      assert.equal(tagAlive(tag), false);
+    } finally {
+      await close();
+    }
+  });
+
+  it('invalid arguments are rejected by the SDK', async () => {
+    const { client, close } = await connect('echo');
+    try {
+      const missing = await client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi' } });
+      assert.equal(missing.isError, true);
+      const relative = await client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: 'src' } });
+      assert.equal(relative.isError, true);
+    } finally {
+      await close();
+    }
+  });
+
+  it('client cancel closes the adapter', async () => {
+    const { client, tag, close } = await connect('hang');
+    try {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 300);
+      await assert.rejects(
+        client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo } }, undefined, {
+          signal: controller.signal,
+        }),
+      );
+      await waitFor(() => !tagAlive(tag), 2000, 'adapter outlived the cancelled call');
+    } finally {
+      await close();
+    }
+  });
+
+  it('progress notifications reach the client', async () => {
+    const { client, close } = await connect('echo');
+    try {
+      const messages: string[] = [];
+      const result = await client.callTool(
+        { name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo } },
+        CallToolResultSchema,
+        { onprogress: (p) => void messages.push(p.message ?? '') },
+      );
+      assert.equal(result.isError, undefined);
+      assert.ok(messages.includes('read README.md'), JSON.stringify(messages));
+    } finally {
+      await close();
+    }
+  });
 });

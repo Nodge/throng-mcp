@@ -104,7 +104,7 @@ output (failure, MCP tool error: isError = true): {
 }
 ```
 
-Both are a single JSON text block in `content[0].text`; no `structuredContent`, no `outputSchema`. Invalid input is a protocol error (zod in the SDK); everything else that goes wrong is a tool error with the payload above, never an exception.
+Both are a single JSON text block in `content[0].text`; no `structuredContent`, no `outputSchema`. Invalid input is rejected by the SDK's zod validation before our code runs (MCP SDK 1.30 reports it as a tool error whose text is the validation message, not the payload above); everything else that goes wrong is a tool error with the payload above, never an exception.
 
 ```ts
 type ErrorCode =
@@ -298,7 +298,7 @@ One mechanism for all harnesses, transport-independent, no network:
 
 ## 8. Config, sessions, logs
 
-`~/.config/throng/config.yaml` (optional, path via `THRONG_MCP_CONFIG`). All env vars of the server use the `THRONG_MCP_` prefix.
+`~/.config/throng/config.yaml` (optional, path via `THRONG_MCP_CONFIG`). Session records and run transcripts live under `~/.cache/throng` (path via `THRONG_MCP_CACHE_DIR`). All env vars of the server use the `THRONG_MCP_` prefix.
 ```yaml
 permissions: auto            # auto | allow_all | deny_all | elicit; global default
 harnesses:
