@@ -4,6 +4,7 @@ title: Harnesses
 status: To Do
 assignee: []
 created_date: '2026-09-27 18:56'
+updated_date: '2026-09-27 19:18'
 labels: []
 milestone: m-0
 dependencies:
@@ -24,11 +25,12 @@ Scope: DESIGN §2.3, §3.4, §4.1.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 `harnesses/{claude,codex,opencode}.ts` follow the table in DESIGN §4.1; a missing binary on PATH gives `available: false` with `reason`
-- [ ] #2 `list_harnesses` probes every available harness without sending a prompt and returns its models and efforts
-- [ ] #3 A model not among the harness options fails with `model_rejected` listing the valid values
-- [ ] #4 Effort goes through `mapEffort`; an unmapped effort yields a warning, not an error
-- [ ] #5 Shared logic is covered by fake-agent tests; real adapters are left to smoke
+- [ ] #1 `harnesses/{claude,codex,opencode}.ts` follow the table in DESIGN §4.1; an adapter command missing from PATH gives an `unavailable` entry whose `reason` carries the install command from the registry snapshot (decision-3)
+- [ ] #2 `CLAUDE_CODE_EXECUTABLE`/`CODEX_PATH` are set from PATH when the harness binary is found and not overridden in config; a missing harness binary alone does not make the harness unavailable
+- [ ] #3 `list_harnesses` probes every available harness without sending a prompt and returns its models, efforts and adapter `version` (`initialize.agentInfo.version`)
+- [ ] #4 A model not among the harness options fails with `model_rejected` listing the valid values
+- [ ] #5 Effort goes through `mapEffort`; an unmapped effort yields a warning, not an error
+- [ ] #6 Shared logic is covered by fake-agent tests; real adapters are left to smoke
 <!-- AC:END -->
 
 ## Definition of Done

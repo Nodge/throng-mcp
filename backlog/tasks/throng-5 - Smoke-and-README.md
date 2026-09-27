@@ -4,6 +4,7 @@ title: Smoke and README
 status: To Do
 assignee: []
 created_date: '2026-09-27 18:56'
+updated_date: '2026-09-27 19:18'
 labels: []
 milestone: m-0
 dependencies:
@@ -25,9 +26,9 @@ Scope: DESIGN §9, §10.
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [ ] #1 `scripts/smoke/*` with `pnpm smoke:<harness>` for claude, codex and opencode
-- [ ] #2 README covers install, the registration command for the user to run, and config
+- [ ] #2 README covers install of throng and of the adapters (commands with the verified versions, `--omit=optional` when the harness is on PATH), the registration command for the user to run, and config
 - [ ] #3 Quirks found during smoke are fixed
-- [ ] #4 Maintainer smoke passed: claude/codex/opencode × `auto`, opencode with a custom provider, Esc leaves no orphans, a call over 2 min goes to the background
+- [ ] #4 Maintainer smoke passed with user-installed adapters (versions recorded from `list_harnesses`): claude/codex/opencode × `auto`, opencode with a custom provider, Esc leaves no orphans, a call over 2 min goes to the background
 <!-- AC:END -->
 
 ## Definition of Done

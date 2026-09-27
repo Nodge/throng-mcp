@@ -4,6 +4,7 @@ title: run_thronglet
 status: To Do
 assignee: []
 created_date: '2026-09-27 18:56'
+updated_date: '2026-09-27 19:18'
 labels: []
 milestone: m-0
 dependencies:
@@ -29,6 +30,7 @@ Scope: DESIGN §3.2, §5 (auto row only), §7, §8.
 - [ ] #3 Semaphore, depth guard, timeouts and progress notifications behave per DESIGN §7
 - [ ] #4 Session records and per-call transcripts are written per DESIGN §8
 - [ ] #5 Integration tests run the full call through fake-agent
+- [ ] #6 `run_thronglet` checks the adapter command before spawn: missing → `harness_unavailable` with the install command, not `spawn_failed`
 <!-- AC:END -->
 
 ## Definition of Done

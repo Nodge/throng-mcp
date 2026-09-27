@@ -26,8 +26,10 @@ node 24.11.1, pnpm 11.10, claude 2.1.282, codex 0.156.1, opencode 1.18.30. `curs
 
 ### 2.3 Adapters
 
+Versions below are the ones the design was verified against; the user installs adapters and may run others (§4.1).
+
 `@agentclientprotocol/claude-agent-acp` 0.81.2 (bin `claude-agent-acp`):
-- Drags a full copy of Claude Code with it: depends on `@anthropic-ai/claude-agent-sdk`, whose optional platform package (`…-darwin-arm64`, 217 MB) is the Claude Code 2.1.280 binary. We exclude that package (§4.1) and point the adapter at the installed `claude` via `CLAUDE_CODE_EXECUTABLE`.
+- Drags a full copy of Claude Code with it: depends on `@anthropic-ai/claude-agent-sdk`, whose optional platform package (`…-darwin-arm64`, 217 MB) is the Claude Code 2.1.280 binary. `CLAUDE_CODE_EXECUTABLE` points the adapter at another `claude`, and then it runs without the platform package (decision-1).
 - Model: config option category `model` (also env `ANTHROPIC_MODEL`). Effort: option `effort`, category `thought_level`.
 - Modes: `default | acceptEdits | plan | auto | bypassPermissions`. `auto` falls back to `acceptEdits` with a `notice` when the model doesn't support it. Initial mode comes from `settings.json permissions.defaultMode`, so set it explicitly after `session/new`.
 - `session/new._meta.claudeCode.options` passes Agent SDK options (`disallowedTools`, `allowedTools`, `env`, `settings`, ...).
@@ -36,7 +38,7 @@ node 24.11.1, pnpm 11.10, claude 2.1.282, codex 0.156.1, opencode 1.18.30. `curs
 - Usage: `usage_update` with `cost.amount` (USD), plus `PromptResponse.usage`.
 
 `@agentclientprotocol/codex-acp` 1.13.1 (bin `codex-acp`, TypeScript):
-- Same story: depends on `@openai/codex`, whose optional platform package is the codex binary. Excluded the same way; `CODEX_PATH` points at the installed `codex`.
+- Same story: depends on `@openai/codex`, whose optional platform package is the codex binary; `CODEX_PATH` overrides it the same way.
 - Options: `model`, `reasoning_effort` (category `thought_level`), `mode`.
 - Mode presets: `read-only` (asks the user, workspace-write sandbox), `agent` (default; approvals decided by auto_review, workspace-write), `agent-full-access` (never + danger-full-access).
 - `mcpServers`: stdio, http. Usage without cost. Env `CODEX_CONFIG` = JSON layered over config.toml.
@@ -106,7 +108,7 @@ Both are a single JSON text block in `content[0].text`; no `structuredContent`, 
 
 ```ts
 type ErrorCode =
-  | 'harness_unavailable'    // adapter or harness binary not found (see list_harnesses)
+  | 'harness_unavailable'    // adapter command not found, checked before spawn; message carries the install command (§4.1)
   | 'depth_exceeded'         // §7
   | 'elicitation_unsupported'// policy 'elicit' configured but the client lacks the capability; before spawn
   | 'session_not_found'      // resume_thronglet: unknown id or harness lacks sessionCapabilities.resume
@@ -141,10 +143,11 @@ output: {
   harnesses: Array<{
     harness: 'claude' | 'codex' | 'opencode';
     command: string[];       // what will actually be launched
+    version?: string;        // adapter's initialize.agentInfo.version: adapters are user-installed, versions drift
     models: string[];        // config option category 'model'
     efforts: string[];       // config option category 'thought_level'; empty when the harness has none
   }>;
-  unavailable: Array<{ harness: string; reason: string }>;   // 'codex not found on PATH', config error, probe failed
+  unavailable: Array<{ harness: string; reason: string }>;   // adapter not found + install command, config error, probe failed
   limits: { max_concurrency; max_depth; default_timeout_s; current_depth };
 }
 ```
@@ -193,23 +196,26 @@ Layers: `run.ts` knows about MCP (progress, elicitation, signal) and about Worke
 
 ### 4.1 Harnesses and discovery
 
-Adapters ship with throng-mcp as pinned dependencies; harness CLIs are installed by the user and found on PATH:
+throng-mcp ships no adapters and no harnesses (decision-3). The user installs both; throng finds them on PATH:
 
 | | claude | codex | opencode |
 |---|---|---|---|
 | registry id | `claude-acp` | `codex-acp` | `opencode` |
-| adapter | `node_modules/.bin/claude-agent-acp` (dep) | `node_modules/.bin/codex-acp` (dep) | `opencode acp` (PATH) |
+| adapter on PATH | `claude-agent-acp` | `codex-acp` | `opencode acp` |
+| install hint | `npm i -g @agentclientprotocol/claude-agent-acp@0.81.2` | `npm i -g @agentclientprotocol/codex-acp@1.13.1` | opencode install docs |
 | harness on PATH | `claude` → `CLAUDE_CODE_EXECUTABLE` | `codex` → `CODEX_PATH` | same binary |
 | model | option category `model` | option category `model` | option category `model` |
 | effort | option `thought_level`; exact | `thought_level`; `max → xhigh` | `thought_level` if present; otherwise warning |
 | `auto` | mode `auto` | mode `agent` | opencode.json defaults |
 | `allow_all` / `deny_all` / `elicit` | mode `default` | mode `read-only` (asks the client) | `OPENCODE_CONFIG_CONTENT={"permission":"ask"}` |
 
-The adapters' platform packages with harness binaries (`@anthropic-ai/claude-agent-sdk-<os>-<arch>`, `@openai/codex-<os>-<arch>`) are excluded via `pnpm.ignoredOptionalDependencies` in package.json, so no second copy of Claude Code or codex lands on disk. The adapters are pointed at the installed harnesses through `CLAUDE_CODE_EXECUTABLE` and `CODEX_PATH`. Whether `claude-agent-acp` starts without its platform package when the env override is set is unverified: spike in THRONG-1; fallback is to drop the ignore for that package and live with the 217 MB.
+Availability is decided by the adapter command only. Adapter not on PATH → `unavailable` with `reason` = `<command> not found on PATH; install: <hint>`, and `run_thronglet` fails with `harness_unavailable` and the same text before spawn. The harness binary is optional: when `claude`/`codex` is on PATH, its absolute path goes into `CLAUDE_CODE_EXECUTABLE`/`CODEX_PATH` (unless config sets them), so the adapter runs the user's installed and logged-in harness; otherwise the adapter falls back to its bundled platform package, and if that is missing too, the probe fails at handshake and the adapter's error lands in `reason`. Everything past "the command exists" is checked by the probe (§3.4), not by guessing.
 
-`data/registry.json` is a verbatim snapshot of the ACP registry. In v1 it supplies `args`/`env` of the distribution for the three ids and the description shown by `list_harnesses`; commands come from the table above. Later iterations can fetch the live registry and expose "generic" harnesses from it without changing the data shape.
+Install hints for npm adapters come from `distribution.npx.package` of the registry snapshot (it carries the verified version); OpenCode ships as a binary, so its hint is a fixed pointer to its install docs. `npm i -g --omit=optional` skips the platform packages (~500 MB for both adapters, decision-1); it's safe only with the harness on PATH, so it goes into the README as an option, not into the hint.
 
-Missing harness binary on PATH → `available: false` with `reason`. Config (§8) can override `command`/`args`/`env` per harness.
+`data/registry.json` is a verbatim snapshot of the ACP registry. In v1 it supplies `args`/`env` of the distribution for the three ids, the install hints and the description shown by `list_harnesses`; commands come from the table above. Later iterations can fetch the live registry and expose "generic" harnesses from it without changing the data shape.
+
+Config (§8) can override `command`/`args`/`env` per harness, e.g. to point at an adapter outside PATH.
 
 ```ts
 interface HarnessDefinition {
@@ -320,9 +326,9 @@ Logs: server stderr has short lines (worker start/stop, errors, transcript path)
 
 ## 9. Package, language, tests
 
-- `package.json`: `private`, `type: module`, `engines.node >= 24`, no `bin`. pnpm. Dependencies: `@modelcontextprotocol/sdk` ^1 (latest), `@agentclientprotocol/sdk` 1.5.0, `@agentclientprotocol/claude-agent-acp` 0.81.2 (exact), `@agentclientprotocol/codex-acp` 1.13.1 (exact), `ajv` ^8, `zod` ^4, `yaml` ^2. Dev: `typescript`, `@types/node`. `pnpm.ignoredOptionalDependencies` lists the harness platform packages (§4.1).
+- `package.json`: `private`, `type: module`, `engines.node >= 24`, no `bin`. pnpm. Dependencies: `@modelcontextprotocol/sdk` ^1 (latest), `@agentclientprotocol/sdk` 1.5.0, `ajv` ^8, `zod` ^4, `yaml` ^2. Dev: `typescript`, `@types/node`. No adapters (§4.1).
 - Run with `node src/mcp.ts`, no transpilation (type stripping): no `enum`, `namespace`, parameter properties, `import =`. tsconfig: `strict`, `erasableSyntaxOnly`, `verbatimModuleSyntax`, `allowImportingTsExtensions`, `module: nodenext`, `noEmit`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. Imports with `.ts`.
-- Scripts: `pnpm typecheck` (`tsc --noEmit`), `pnpm test` (`node --test test/`), `pnpm smoke:<harness>`.
+- Scripts: `pnpm typecheck` (`tsc --noEmit`), `pnpm test` (`node --test "test/*.test.ts"`; a bare directory is not accepted by Node 24), `pnpm smoke:<harness>`.
 - Tests without an LLM: `test/fake-agent` is an ACP agent on the agent-side SDK, scenarios via env (`FAKE_SCENARIO=echo|permission|submit-valid|submit-invalid-then-valid|resume|hang|crash-on-prompt|notice`). They cover Worker, collector, permissions (all 4 policies; elicit through a fake MCP client with the capability), structured (both re-prompt branches), resume, timeouts, cancel, tree kill (fake-agent spawns a grandchild `sleep`; after close it's gone), depth, semaphore, agent-spec parsing.
 - Smoke on real harnesses (manual, one at a time; per-stage lists are in the backlog tasks): claude/codex/opencode × `auto`, opencode with a custom provider, Esc → no orphans, a call > 2 min from the main session goes to the background; v2 adds codex+schema, resume with a follow-up question, elicit from an interactive session.
 
