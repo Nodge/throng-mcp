@@ -30,7 +30,21 @@ const UNADVERTISED_METHODS = [
 
 type HandshakeStep = 'initialize' | 'session/new' | 'session/resume';
 
+/** Workers from spawn until their close() finishes, handshake included. */
+const live = new Set<AcpWorker>();
+let shuttingDown = false;
+
+/**
+ * Server shutdown (DESIGN §4.2): step 7 for every live worker. Workers requested afterwards
+ * are refused with `cancelled`, so a call racing the shutdown can't spawn past it.
+ */
+export async function closeAllWorkers(): Promise<void> {
+  shuttingDown = true;
+  await Promise.all([...live].map((worker) => worker.close()));
+}
+
 export const startWorker: StartWorker = async (spawn, start, hooks, limits) => {
+  if (shuttingDown) throw new ThrongError('cancelled', `server is shutting down; not starting ${spawn.command}`);
   let worker: AcpWorker;
   try {
     worker = new AcpWorker(spawn, hooks, limits);
@@ -106,6 +120,7 @@ class AcpWorker implements Worker {
       Readable.toWeb(this.#child.stdout!) as ReadableStream<Uint8Array>,
     );
     this.#connection = app.connect(stream);
+    live.add(this);
   }
 
   get #child(): ChildProcess {
@@ -215,6 +230,7 @@ class AcpWorker implements Worker {
         value,
       }),
     );
+    if (this.#session) this.#session.configOptions = response.configOptions;
     return response.configOptions;
   }
 
@@ -249,6 +265,7 @@ class AcpWorker implements Worker {
     } catch {
       // close never throws; killTree already swallows signal errors.
     }
+    live.delete(this);
     this.#connection.close(new Error('worker closed'));
   }
 

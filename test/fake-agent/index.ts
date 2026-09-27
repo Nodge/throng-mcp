@@ -13,7 +13,8 @@ export type FakeScenario =
   | 'no-resume'
   | 'orphan-exit'
   | 'orphan-crash'
-  | 'early-update';
+  | 'early-update'
+  | 'no-effort-option';
 
 const agentPath = fileURLToPath(new URL('./agent.ts', import.meta.url));
 

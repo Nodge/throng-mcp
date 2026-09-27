@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { closeAllWorkers } from './acp/worker.ts';
 import { loadConfig, readDepth } from './config.ts';
-import { HARNESS_IDS, listHarnessesInput } from './contract.ts';
-import type { ListHarnessesOutput } from './contract.ts';
+import { listHarnessesInput } from './contract.ts';
+import { listHarnesses } from './harnesses/probe.ts';
 import { log } from './log.ts';
 
 // Entry point: `node src/mcp.ts`. stdout belongs to the MCP transport; logs go to stderr.
@@ -16,25 +17,22 @@ const { config } = loaded;
 
 const server = new McpServer({ name: 'throng', version });
 
+/** Tool calls still running; shutdown waits for them so their cleanup (scratch dirs) runs. */
+const inflight = new Set<Promise<unknown>>();
+function track<T>(call: Promise<T>): Promise<T> {
+  inflight.add(call);
+  call.finally(() => inflight.delete(call)).catch(() => {});
+  return call;
+}
+
 server.registerTool(
   'list_harnesses',
   {
     description: 'List the harnesses throng can run, with their models, effort levels and the server limits.',
     inputSchema: listHarnessesInput,
   },
-  () => {
-    // Stub until harness discovery lands (THRONG-3).
-    const reason = loaded.error ? `config error: ${loaded.error}` : 'not implemented yet (THRONG-3)';
-    const out: ListHarnessesOutput = {
-      harnesses: [],
-      unavailable: HARNESS_IDS.map((harness) => ({ harness, reason })),
-      limits: {
-        max_concurrency: config.limits.max_concurrency,
-        max_depth: config.limits.max_depth,
-        default_timeout_s: config.limits.timeout_s,
-        current_depth: readDepth(),
-      },
-    };
+  async () => {
+    const out = await track(listHarnesses(loaded, { handshakeMs: config.limits.handshake_s * 1000, depth: readDepth() }));
     // One JSON text block, no structuredContent (decision-2).
     return { content: [{ type: 'text', text: JSON.stringify(out) }] };
   },
@@ -52,6 +50,9 @@ async function shutdown(why: string): Promise<void> {
   } catch (err) {
     log.error('close failed', { error: err instanceof Error ? err.message : String(err) });
   }
+  // Workers first: with their adapters gone, the calls waiting on them settle quickly.
+  await closeAllWorkers();
+  await Promise.allSettled(inflight);
   process.exit(0);
 }
 

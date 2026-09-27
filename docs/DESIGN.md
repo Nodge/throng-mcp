@@ -218,13 +218,12 @@ Install hints for npm adapters come from `distribution.npx.package` of the regis
 Config (§8) can override `command`/`args`/`env` per harness, e.g. to point at an adapter outside PATH.
 
 ```ts
-interface HarnessDefinition {
+interface HarnessDefinition {                 // src/harnesses/types.ts
   id: 'claude' | 'codex' | 'opencode';
   registryId: string;
-  resolve(config, registry): { command: string; args: string[]; env: Record<string,string> } | { unavailable: string };
+  resolve(config, registry, env?): { available: true; launch: { command; args; env } } | { available: false; reason: string };
   mapEffort(level: Effort, options: string[]): string | undefined;   // our level → option value; undefined = not applicable → warning
   permissionSetup(policy): { modeId?: string; env?: Record<string,string>; newSessionMeta?: object };
-  quirks: { stdioMcpNoType?: boolean; ... };
 }
 ```
 

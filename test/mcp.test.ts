@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,15 +13,66 @@ import type { ListHarnessesOutput } from '../src/contract.ts';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'throng-mcp-'));
-after(() => rmSync(dir, { recursive: true, force: true }));
+const fakeAgent = fileURLToPath(new URL('./fake-agent/agent.ts', import.meta.url));
 
-/** Parent env without THRONG_MCP_* (the tests may themselves run inside a throng session), plus overrides. */
+// PATH for the server: only `node`, so list_harnesses never finds (and probes) a real adapter.
+const bin = join(dir, 'bin');
+mkdirSync(bin);
+symlinkSync(process.execPath, join(bin, 'node'));
+
+const tags: string[] = [];
+after(() => {
+  for (const tag of tags) {
+    try {
+      execFileSync('pkill', ['-9', '-f', tag]);
+    } catch {
+      // nothing matched
+    }
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/** Parent env without THRONG_MCP_* (the tests may themselves run inside a throng session), PATH = `bin`, plus overrides. */
 function serverEnv(overrides: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && !key.startsWith('THRONG_MCP_')) env[key] = value;
   }
-  return { THRONG_MCP_CONFIG: join(dir, 'missing.yaml'), ...env, ...overrides };
+  return { ...env, THRONG_MCP_CONFIG: join(dir, 'missing.yaml'), PATH: bin, ...overrides };
+}
+
+/** Unique argv marker for a fake agent the server spawns, so the test can pgrep for leftovers. */
+function newTag(): string {
+  const tag = `fake-agent-${randomUUID()}`;
+  tags.push(tag);
+  return tag;
+}
+
+function tagAlive(tag: string): boolean {
+  try {
+    execFileSync('pgrep', ['-f', tag]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function assertInstallHints(unavailable: ListHarnessesOutput['unavailable'], harnesses: string[]): void {
+  assert.deepEqual(unavailable.map((u) => u.harness), harnesses);
+  const hints: Record<string, string> = {
+    claude: 'claude-agent-acp not found on PATH; install: npm i -g @agentclientprotocol/claude-agent-acp@0.81.2',
+    codex: 'codex-acp not found on PATH; install: npm i -g @agentclientprotocol/codex-acp@1.13.1',
+    opencode: 'opencode not found on PATH; install: see https://opencode.ai/docs (binary install)',
+  };
+  for (const { harness, reason } of unavailable) assert.equal(reason, hints[harness]);
+}
+
+async function waitFor(check: () => boolean, ms: number, what: string): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > deadline) assert.fail(what);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 function writeConfig(name: string, content: string): string {
@@ -67,14 +119,55 @@ async function callListHarnesses(env: Record<string, string>): Promise<{ tools: 
 }
 
 describe('mcp server over stdio', () => {
-  it('exposes a list_harnesses stub with default limits', async () => {
+  it('without adapters on PATH: every harness unavailable with its install hint, default limits', async () => {
     const { tools, out } = await callListHarnesses(serverEnv({}));
     assert.deepEqual(tools, ['list_harnesses']);
-    assert.deepEqual(out, {
-      harnesses: [],
-      unavailable: ['claude', 'codex', 'opencode'].map((harness) => ({ harness, reason: 'not implemented yet (THRONG-3)' })),
-      limits: { max_concurrency: 10, max_depth: 2, default_timeout_s: 21600, current_depth: 0 },
-    });
+    assert.deepEqual(out.harnesses, []);
+    assertInstallHints(out.unavailable, ['claude', 'codex', 'opencode']);
+    assert.deepEqual(out.limits, { max_concurrency: 10, max_depth: 2, default_timeout_s: 21600, current_depth: 0 });
+  });
+
+  it('probes a configured adapter: models, efforts, version', async () => {
+    const tag = newTag();
+    const config = writeConfig(
+      'fake-claude.yaml',
+      `harnesses: { claude: { command: ${JSON.stringify(process.execPath)}, args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"] } }\n`,
+    );
+    const { out } = await callListHarnesses(serverEnv({ THRONG_MCP_CONFIG: config }));
+    assert.deepEqual(out.harnesses, [
+      {
+        harness: 'claude',
+        command: [process.execPath, fakeAgent, `--tag=${tag}`],
+        models: ['fake-small', 'fake-large'],
+        efforts: ['low', 'high'],
+        version: '0.0.1',
+      },
+    ]);
+    assertInstallHints(out.unavailable, ['codex', 'opencode']);
+    assert.equal(tagAlive(tag), false, 'probed fake agent still running');
+  });
+
+  it('a probe that times out lands in unavailable and leaves no process behind', async () => {
+    const tag = newTag();
+    const config = writeConfig(
+      'hang-claude.yaml',
+      [
+        'limits: { handshake_s: 1 }',
+        'harnesses:',
+        '  claude:',
+        `    command: ${JSON.stringify(process.execPath)}`,
+        `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
+        '    env: { FAKE_SCENARIO: handshake-hang }',
+        '',
+      ].join('\n'),
+    );
+    const { out } = await callListHarnesses(serverEnv({ THRONG_MCP_CONFIG: config }));
+    assert.deepEqual(out.harnesses, []);
+    assert.deepEqual(out.unavailable.map((u) => u.harness), ['claude', 'codex', 'opencode']);
+    const claude = out.unavailable[0]?.reason ?? '';
+    assert.match(claude, /did not answer initialize within 1000 ms/);
+    assertInstallHints(out.unavailable.slice(1), ['codex', 'opencode']);
+    assert.equal(tagAlive(tag), false, 'timed-out fake agent still running');
   });
 
   it('reflects the config file and THRONG_MCP_DEPTH', async () => {
@@ -92,6 +185,44 @@ describe('mcp server over stdio', () => {
       assert.ok(reason.includes(config), reason);
     }
     assert.equal(out.limits.max_depth, 2);
+  });
+
+  it('SIGTERM during a probe closes the probed adapter and removes its scratch dir', async () => {
+    // An adapter that never answers and ignores stdin EOF: only the worker's close() ends it.
+    const tag = newTag();
+    const config = writeConfig(
+      'stuck-claude.yaml',
+      [
+        'limits: { handshake_s: 30 }',
+        'harnesses:',
+        '  claude:',
+        `    command: ${JSON.stringify(process.execPath)}`,
+        `    args: ["-e", "setInterval(() => {}, 1000)", ${JSON.stringify(tag)}]`,
+        '',
+      ].join('\n'),
+    );
+    const tmp = join(dir, 'tmp-sigterm');
+    mkdirSync(tmp);
+    const env = serverEnv({ THRONG_MCP_CONFIG: config, TMPDIR: tmp });
+    const transport = new StdioClientTransport({ command: process.execPath, args: ['src/mcp.ts'], cwd: repo, env, stderr: 'pipe' });
+    let stderr = '';
+    transport.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    const client = new Client({ name: 'throng-test', version: '0' });
+    await client.connect(transport);
+    const pid = transport.pid;
+    assert.ok(pid, 'server pid');
+    try {
+      client.callTool({ name: 'list_harnesses', arguments: {} }).catch(() => {});
+      await waitFor(() => tagAlive(tag), 5000, 'probed adapter never started');
+      assert.equal(readdirSync(tmp).length, 1, 'probe scratch dir');
+      process.kill(pid, 'SIGTERM');
+      await waitFor(() => !isAlive(pid), 8000, 'server did not exit after SIGTERM');
+      assert.match(stderr, /throng stopping why=SIGTERM/);
+      assert.equal(tagAlive(tag), false, 'probed adapter outlived the server');
+      assert.deepEqual(readdirSync(tmp), [], 'probe scratch dir left behind');
+    } finally {
+      await client.close();
+    }
   });
 
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {

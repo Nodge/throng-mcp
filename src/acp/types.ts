@@ -52,6 +52,7 @@ export interface WorkerSession {
   agentInfo?: Implementation;
   agentCapabilities?: AgentCapabilities;
   modes?: SessionModeState;
+  /** Refreshed by every `setConfigOption`: the agent returns the full list, and effort values may depend on the model. */
   configOptions?: SessionConfigOption[];
 }
 

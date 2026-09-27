@@ -20,7 +20,7 @@ interface FakeSession {
 const sessions = new Map<string, FakeSession>();
 
 function freshSession(resumed: boolean): FakeSession {
-  return {
+  const session: FakeSession = {
     resumed,
     modeId: 'ask',
     configOptions: [
@@ -50,6 +50,8 @@ function freshSession(resumed: boolean): FakeSession {
     cost: 0,
     pending: undefined,
   };
+  if (scenario === 'no-effort-option') session.configOptions = session.configOptions.filter((o) => o.id !== 'effort');
+  return session;
 }
 
 function modes(session: FakeSession): SessionModeState {
