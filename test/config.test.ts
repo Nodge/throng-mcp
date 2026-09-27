@@ -45,6 +45,12 @@ describe('loadConfig', () => {
     assert.deepEqual(loaded.config, DEFAULT_CONFIG);
   });
 
+  it('treats a harness entry without a value as an empty override', () => {
+    const loaded = loadConfig(withFile('empty-harness.yaml', 'harnesses:\n  codex:\n    # permissions: allow_all\n'));
+    assert.equal(loaded.error, undefined);
+    assert.deepEqual(loaded.config.harnesses, { codex: {} });
+  });
+
   it('merges file values over the defaults', () => {
     const env = withFile(
       'partial.yaml',

@@ -29,7 +29,7 @@ const section = <T extends z.ZodType>(schema: T) => z.preprocess((v) => v ?? und
 
 const configSchema = z.strictObject({
   permissions: section(permissionPolicy.default('auto')),
-  harnesses: section(z.partialRecord(z.enum(HARNESS_IDS), harnessOverride).default({})),
+  harnesses: section(z.partialRecord(z.enum(HARNESS_IDS), z.preprocess((v) => v ?? {}, harnessOverride)).default({})),
   limits: section(limits.prefault({})),
 });
 

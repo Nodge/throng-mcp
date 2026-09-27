@@ -10,7 +10,11 @@
   "scripts": {
     "start": "node src/mcp.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/*.test.ts\""
+    "test": "node --test \"test/*.test.ts\"",
+    "smoke": "node scripts/smoke/smoke.ts",
+    "smoke:claude": "node scripts/smoke/smoke.ts claude/haiku",
+    "smoke:codex": "node scripts/smoke/smoke.ts codex/gpt-6-luna",
+    "smoke:opencode": "node scripts/smoke/smoke.ts opencode/opencode/big-pickle"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.5.0",

@@ -17,7 +17,8 @@ export type FakeScenario =
   | 'no-effort-option'
   | 'empty'
   | 'refuse'
-  | 'max-turns';
+  | 'max-turns'
+  | 'write-pong';
 
 const agentPath = fileURLToPath(new URL('./agent.ts', import.meta.url));
 

@@ -1,7 +1,9 @@
 import * as acp from '@agentclientprotocol/sdk';
-import type { AgentContext, SessionConfigOption, SessionModeState, SessionUpdate, StopReason } from '@agentclientprotocol/sdk';
+import type { AgentContext, McpServer, SessionConfigOption, SessionModeState, SessionUpdate, StopReason } from '@agentclientprotocol/sdk';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 
 // Minimal ACP agent for tests; no LLM. Scenario via FAKE_SCENARIO (default `echo`), see index.ts.
@@ -11,6 +13,9 @@ const scenario = process.env.FAKE_SCENARIO ?? 'echo';
 
 interface FakeSession {
   resumed: boolean;
+  /** From session/new or session/resume. */
+  cwd: string;
+  mcpServers: McpServer[];
   modeId: string;
   configOptions: SessionConfigOption[];
   cost: number;
@@ -22,9 +27,11 @@ const sessions = new Map<string, FakeSession>();
 /** Scenarios that end the turn with something other than end_turn. */
 const STOP_REASONS: Partial<Record<string, StopReason>> = { refuse: 'refusal', 'max-turns': 'max_turn_requests' };
 
-function freshSession(resumed: boolean): FakeSession {
+function freshSession(resumed: boolean, cwd: string, mcpServers: McpServer[]): FakeSession {
   const session: FakeSession = {
     resumed,
+    cwd,
+    mcpServers,
     modeId: 'ask',
     configOptions: [
       {
@@ -100,6 +107,12 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
       return;
     case 'refuse':
       await say('I will not do that.');
+      return;
+    case 'write-pong':
+      await writeFile(join(session.cwd, 'pong.txt'), 'pong');
+      await say('done');
+      session.cost += 0.01;
+      await send({ sessionUpdate: 'usage_update', used: 100, size: 1000, cost: { amount: Number(session.cost.toFixed(2)), currency: 'USD' } });
       return;
     case 'hang':
       await new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled'))));
@@ -187,13 +200,13 @@ app = scenario === 'handshake-hang'
 app
   .onRequest('session/new', async (ctx) => {
     const sessionId = `fake-${randomUUID()}`;
-    const session = freshSession(false);
+    const session = freshSession(false, ctx.params.cwd, ctx.params.mcpServers);
     sessions.set(sessionId, session);
     await earlyUpdate(sessionId, ctx.client);
     return { sessionId, modes: modes(session), configOptions: session.configOptions };
   })
   .onRequest('session/resume', async (ctx) => {
-    const session = freshSession(true);
+    const session = freshSession(true, ctx.params.cwd, ctx.params.mcpServers ?? []);
     sessions.set(ctx.params.sessionId, session);
     await earlyUpdate(ctx.params.sessionId, ctx.client);
     return { modes: modes(session), configOptions: session.configOptions };
