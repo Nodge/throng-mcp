@@ -209,6 +209,7 @@ Record the adapter versions `list_harnesses` reported in the backlog task notes.
 ## Troubleshooting
 
 - `harness_unavailable`: the adapter isn't on PATH, and the message carries the install command; or the config is broken (message starts with `config error:`): fix the yaml, throng won't run on defaults; or `permissions` is something other than `auto` (v2).
+- A warning `permission mode "auto" not applied: the agent switched to "acceptEdits"`: Claude Code has no auto mode for that model (haiku, for one) and falls back to accept-edits; file edits are still auto-approved, other requests are answered `allow_once` by throng. Pick another model if you need the real auto mode.
 - `model_rejected`: the model isn't one of the harness's values. Call `list_harnesses` for the current list; they are the harness's own option values and change with harness versions.
 - `handshake_timeout` / `spawn_failed` / `handshake_failed`: the message includes the adapter's stderr. Usual cause is auth: check `claude auth status` (or set `CLAUDE_CODE_OAUTH_TOKEN` in config), `codex login`, `opencode auth login`. Slow first start: raise `limits.handshake_s`.
 - `empty_result`: the agent ended its turn without saying anything; the transcript shows what it did.

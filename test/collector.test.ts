@@ -26,6 +26,19 @@ describe('collector', () => {
     assert.equal(c.text, 'second');
   });
 
+  it('agent text before the turn becomes a warning, not text', () => {
+    const c = new Collector();
+    c.handle(text('Auto mode unavailable; using Accept edits instead.'));
+    c.startTurn();
+    c.handle(text('done'));
+    c.endTurn(stop());
+    assert.equal(c.text, 'done');
+    assert.deepEqual(c.warnings, ['agent message before the task: Auto mode unavailable; using Accept edits instead.']);
+    // Text of a finished turn is not re-reported by the next startTurn.
+    c.startTurn();
+    assert.equal(c.warnings.length, 1);
+  });
+
   it('non-text message chunks are ignored for text', () => {
     const c = new Collector();
     c.startTurn();

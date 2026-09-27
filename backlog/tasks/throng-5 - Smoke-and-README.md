@@ -5,7 +5,7 @@ status: Review
 assignee:
   - '@fable'
 created_date: '2026-09-27 18:56'
-updated_date: '2026-09-27 21:17'
+updated_date: '2026-09-27 21:29'
 labels: []
 milestone: m-0
 dependencies:
@@ -92,4 +92,6 @@ GATES: `pnpm typecheck && pnpm test` green; `pgrep -f fake-agent` empty afterwar
 
 <!-- SECTION:NOTES:BEGIN -->
 task-cycle wf_71224bf1-4e8: Opus coder, gates green, dual review 5 findings → 2 confirmed and fixed (f1 minor: orphan check said PASS when pgrep could not run — now FAIL + exit 1, test PATH gets a pgrep symlink; f2 minor: --cwd with a pre-existing pong.txt gave a false PASS — now refused with exit 2), verified; spot-checked smoke.ts:53-55, 70-75, 194-207. Deviations accepted: explicit SDK request timeouts on both tool calls ((timeout_s+60) s and 180 s — the SDK default of 60 s would cut real runs); pong.txt check also applies to a custom --prompt (README says so); final SMOKE PASSED/FAILED line. Main session after the cycle: config.ts now treats a harness entry with no value (codex: with only commented children) as an empty override, so the DESIGN §8 yaml loads as written (+ test); README note adjusted. Deferred: f3 relative --cwd resolves against process.cwd() (README uses absolute paths). Pre-cycle check by the main session on the real server (no prompt, no tokens): list_harnesses probed all three installed adapters in 3.6 s — claude-agent-acp 0.76.0 (5 models, 6 efforts), codex-acp 1.11.0 (7 models, 6 efforts), opencode 1.18.30 (411 models, no efforts); no leftover processes; CLAUDECODE=1 in the env does not break the handshake. Installed adapters are older than the registry snapshot (0.81.2 / 1.13.1). WAITING ON THE MAINTAINER (AC #3, #4): pnpm smoke:claude / smoke:codex / smoke:opencode (+ opencode with a custom provider), Esc → no orphans, a >2 min call goes to the background; record adapter versions from list_harnesses here; standalone claude is not logged in on this machine — put CLAUDE_CODE_OAUTH_TOKEN into harnesses.claude.env first or the claude smoke fails at the prompt.
+
+Maintainer smoke 2026-09-27 (transcripts in ~/.cache/throng/runs, checked by Fable): claude/haiku ok 6.5 s $0.025 (adapter 0.76.0), codex/gpt-6-luna ok 15.1 s (1.11.0), opencode/opencode/big-pickle ok 11.4 s cost 0 (1.18.30); pong.txt written in all three (smoke removed the temp dirs = PASS), no adapter processes left. Quirk found and fixed: claude-agent-acp reports the auto→acceptEdits fallback (haiku has no auto mode) as current_mode_update + a plain agent_message_chunk BEFORE the prompt turn, and startTurn() discarded both — now run.ts warns when current_mode_update differs from the requested mode and the Collector turns pre-turn agent text into a warning; fake scenario mode-fallback + tests; README troubleshooting entry. Still open for AC #4: opencode with a custom provider, Esc → no orphans, a >2 min call goes to the background (no transcripts for these yet).
 <!-- SECTION:NOTES:END -->

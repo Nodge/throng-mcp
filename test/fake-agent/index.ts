@@ -15,6 +15,7 @@ export type FakeScenario =
   | 'orphan-crash'
   | 'early-update'
   | 'no-effort-option'
+  | 'mode-fallback'
   | 'empty'
   | 'refuse'
   | 'max-turns'

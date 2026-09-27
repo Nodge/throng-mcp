@@ -211,11 +211,25 @@ app
     await earlyUpdate(ctx.params.sessionId, ctx.client);
     return { modes: modes(session), configOptions: session.configOptions };
   })
-  .onRequest('session/set_mode', (ctx) => {
+  .onRequest('session/set_mode', async (ctx) => {
     const session = getSession(ctx.params.sessionId);
     const valid = modes(session).availableModes.map((m) => m.id);
     if (!valid.includes(ctx.params.modeId)) {
       throw acp.RequestError.invalidParams(undefined, `unknown mode ${ctx.params.modeId}; valid: ${valid.join(', ')}`);
+    }
+    if (scenario === 'mode-fallback') {
+      // Like claude-agent-acp when the model lacks auto mode: another mode, announced as plain agent text.
+      session.modeId = 'ask';
+      const { sessionId } = ctx.params;
+      await ctx.client.notify(acp.methods.client.session.update, {
+        sessionId,
+        update: { sessionUpdate: 'current_mode_update', currentModeId: 'ask' },
+      });
+      await ctx.client.notify(acp.methods.client.session.update, {
+        sessionId,
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Auto mode unavailable; using Ask instead.' } },
+      });
+      return {};
     }
     session.modeId = ctx.params.modeId;
     return {};

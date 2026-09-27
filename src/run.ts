@@ -58,6 +58,8 @@ export async function runThronglet(input: RunThrongletInput, ctx: RunContext): P
   let bridge: PermissionBridge | undefined;
   let sessionId: string | undefined;
   let worker: Worker | undefined;
+  /** Mode requested by the permission policy; the agent may fall back to another one (claude: auto → acceptEdits). */
+  let requestedMode: string | undefined;
   /** A worker whose handshake outlived a cancel/timeout: closed when it arrives, holding the slot until then. */
   let lingering: Promise<void> | undefined;
   let release: (() => void) | undefined;
@@ -179,7 +181,10 @@ export async function runThronglet(input: RunThrongletInput, ctx: RunContext): P
     });
 
     // The mode is the policy's teeth: failing to set it fails the run. Model before effort: effort values may depend on it.
-    if (setup.modeId) await guard(worker.setMode(setup.modeId));
+    if (setup.modeId) {
+      requestedMode = setup.modeId;
+      await guard(worker.setMode(setup.modeId));
+    }
     await guard(selectModel(worker, spec.model));
     if (spec.effort) {
       const warning = await guard(selectEffort(def, worker, spec.effort));
@@ -207,6 +212,10 @@ export async function runThronglet(input: RunThrongletInput, ctx: RunContext): P
     const { update } = notification;
     if (update.sessionUpdate === 'tool_call') ctx.progress.tool(update.title);
     else if (update.sessionUpdate === 'agent_message_chunk') ctx.progress.text(collector.text.length);
+    else if (update.sessionUpdate === 'current_mode_update' && requestedMode && update.currentModeId !== requestedMode) {
+      const warning = `permission mode "${requestedMode}" not applied: the agent switched to "${update.currentModeId}"`;
+      if (!warnings.includes(warning)) warnings.push(warning);
+    }
   };
 
   /** DESIGN §4.2 cancel path; closing the worker is left to the cleanup. */
