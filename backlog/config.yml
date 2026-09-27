@@ -1,0 +1,16 @@
+project_name: "throng-mcp"
+default_status: "To Do"
+statuses: ["To Do", "In Progress", "Review", "Blocked", "Done"]
+labels: []
+date_format: yyyy-mm-dd
+max_column_width: 20
+auto_open_browser: true
+default_port: 6420
+remote_operations: true
+auto_commit: false
+filesystem_only: false
+bypass_git_hooks: false
+check_active_branches: true
+active_branch_days: 30
+task_prefix: "throng"
+definition_of_done: ["Went through the task-cycle workflow; report spot-checked", "Gates green: pnpm typecheck && pnpm test", "DESIGN.md updated if an external contract (DESIGN §3) changed"]
