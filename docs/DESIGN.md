@@ -321,7 +321,7 @@ Config validation with zod; an error goes to stderr at server start and into `li
 
 Session records: `~/.cache/throng/sessions/<session_id>.json` = `{ harness, model, effort, cwd, created_at, last_used_at }`, keyed by the harness's own ACP session id (UUID-like in all three; collisions across harnesses are not a practical concern). Written when the ACP session exists, updated on every resume. Records survive server restarts.
 
-Logs: server stderr has short lines (worker start/stop, errors, transcript path). Each call's transcript goes to `~/.cache/throng/runs/<ts>-<harness>-<id>.jsonl`: input (prompt length only), all ACP events, permission decisions, stderr tail, outcome. Not returned to the caller; it's for debugging by hand. Rotation: runs and session records older than 14 days are deleted at start.
+Logs: server stderr has short lines (worker start/stop, errors, transcript path). Each call that reached an ACP session gets a transcript at `~/.cache/throng/runs/<ts>-<harness>-<id>.jsonl` (a call that failed before that leaves none: the tool error carries the cause): input (prompt length only), all ACP events, permission decisions, stderr tail, outcome. Not returned to the caller; it's for debugging by hand. Rotation: runs and session records older than 14 days are deleted at start.
 
 ## 9. Package, language, tests
 

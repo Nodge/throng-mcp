@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { join } from 'node:path';
 import { log } from './log.ts';
@@ -7,8 +6,9 @@ import { isSafeName } from './sessions.ts';
 // Per-call JSONL transcript under <cacheDir>/runs (DESIGN §8). Debugging aid only: never returned to the caller.
 
 /**
- * The file name carries the session id, known only after the handshake: lines are buffered until `open()`
- * (or `close()` without a session → `nosession`), then appended as they come.
+ * The file name carries the session id, known only after the handshake: lines are buffered until `open()`,
+ * then appended as they come. A call that never reached a session leaves no file: the tool error already
+ * says why the adapter did not come up.
  */
 export class Transcript {
   /** Goes into the file name; set once the agent spec is parsed. */
@@ -42,13 +42,10 @@ export class Transcript {
   }
 
   /** Picks the file name, flushes the buffer, logs the path. Later calls are no-ops. */
-  open(sessionId?: string): void {
+  open(sessionId: string): void {
     if (this.#path || this.#broken) return;
     const ts = this.#startedAt.toISOString().replaceAll(':', '-');
-    // The session id makes the name unique; without one, a random suffix keeps concurrent calls in separate files.
-    const id =
-      sessionId !== undefined && isSafeName(sessionId) ? sessionId : `nosession-${randomBytes(4).toString('hex')}`;
-    const path = join(this.#dir, `${ts}-${safe(this.harness)}-${id}.jsonl`);
+    const path = join(this.#dir, `${ts}-${safe(this.harness)}-${safe(sessionId)}.jsonl`);
     this.#path = path;
     try {
       mkdirSync(this.#dir, { recursive: true });
@@ -64,8 +61,9 @@ export class Transcript {
     log.info('run transcript', { path });
   }
 
+  /** Flushes and closes the file; without an `open()` the buffered lines are dropped. */
   async close(): Promise<void> {
-    this.open();
+    this.#buffer = [];
     const stream = this.#stream;
     this.#stream = undefined;
     if (!stream || this.#broken) return;

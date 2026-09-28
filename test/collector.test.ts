@@ -44,7 +44,6 @@ describe('collector', () => {
     c.startTurn();
     c.handle(note({ sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: 'AA==', mimeType: 'image/png' } }));
     assert.equal(c.text, '');
-    assert.equal(c.events.length, 1);
   });
 
   it('cost: last value wins; tokens: summed across turns', () => {
@@ -78,11 +77,6 @@ describe('collector', () => {
     c.endTurn(stop());
     assert.equal(c.text, '');
     assert.deepEqual(c.warnings, []);
-    assert.deepEqual(
-      c.events.map((e) => e.kind),
-      ['update', 'update', 'stop'],
-    );
-    assert.equal((c.events[0]?.payload as SessionNotification).update.sessionUpdate, 'agent_thought_chunk');
   });
 
   it('lastToolTitle follows tool_call and titled tool_call_update', () => {

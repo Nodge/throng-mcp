@@ -267,7 +267,7 @@ describe('runThronglet', () => {
 
   it('a permission-mode fallback announced by the agent lands in warnings, not in text', async () => {
     const payload = ok(await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('mode-fallback').loaded)));
-    assert.ok(payload.text.startsWith('echo: '), payload.text);
+    assert.ok(payload.text?.startsWith('echo: '), payload.text);
     assert.deepEqual(payload.warnings, [
       'permission mode "auto" not applied: the agent switched to "ask"',
       'agent message before the task: Auto mode unavailable; using Ask instead.',

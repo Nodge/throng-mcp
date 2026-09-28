@@ -1,13 +1,7 @@
 import type { PromptResponse, SessionNotification } from '@agentclientprotocol/sdk';
 import type { Usage } from '../errors.ts';
 
-// Folds the session/update stream and prompt responses into the run result (DESIGN §4.3).
-
-export interface TranscriptEvent {
-  ts: number;
-  kind: 'update' | 'stop';
-  payload: unknown;
-}
+// Folds the session/update stream and prompt responses into the run result (DESIGN §4.3); the transcript is written by run.ts.
 
 export class Collector {
   #text = '';
@@ -16,7 +10,6 @@ export class Collector {
   #inTurn = false;
   #usage: Usage = {};
   #warnings: string[] = [];
-  #events: TranscriptEvent[] = [];
   #lastToolTitle: string | undefined;
 
   /**
@@ -32,7 +25,6 @@ export class Collector {
   }
 
   handle(notification: SessionNotification): void {
-    this.#events.push({ ts: Date.now(), kind: 'update', payload: notification });
     const update = notification.update;
     switch (update.sessionUpdate) {
       case 'agent_message_chunk':
@@ -60,7 +52,6 @@ export class Collector {
 
   endTurn(response: PromptResponse): void {
     this.#inTurn = false;
-    this.#events.push({ ts: Date.now(), kind: 'stop', payload: response });
     if (response.usage != null) {
       this.#usage.input_tokens = (this.#usage.input_tokens ?? 0) + response.usage.inputTokens;
       this.#usage.output_tokens = (this.#usage.output_tokens ?? 0) + response.usage.outputTokens;
@@ -82,10 +73,6 @@ export class Collector {
 
   get warnings(): string[] {
     return [...this.#warnings];
-  }
-
-  get events(): TranscriptEvent[] {
-    return [...this.#events];
   }
 
   /** Title of the latest tool call seen; progress reports it. */
