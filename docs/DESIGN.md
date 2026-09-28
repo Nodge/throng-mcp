@@ -334,7 +334,7 @@ Logs: server stderr has short lines (worker start/stop, errors, transcript path)
 ## 10. Stages
 
 - **v1 = MVP**: `run_thronglet` with the `auto` policy, `list_harnesses`, three harnesses. Enough to call it from a real session.
-- **v2**: structured output, `resume_thronglet`, permission policies `allow_all | deny_all | elicit`.
+- **v2**: structured output, `resume_thronglet`, permission policies `allow_all | deny_all | elicit`, messages into a running thronglet (THRONG-9; contract TBD).
 - Later: §11.
 
 Tasks, their acceptance criteria and dependencies live in Backlog.md: milestones `v1` and `v2` (`backlog task list -m v1 --plain`).
