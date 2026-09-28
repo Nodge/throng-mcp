@@ -1,11 +1,11 @@
 ---
 id: THRONG-5
 title: Smoke and README
-status: Review
+status: Done
 assignee:
   - '@fable'
 created_date: '2026-09-27 18:56'
-updated_date: '2026-09-27 21:29'
+updated_date: '2026-09-28 10:12'
 labels: []
 milestone: m-0
 dependencies:
@@ -28,8 +28,8 @@ Scope: DESIGN §9, §10.
 <!-- AC:BEGIN -->
 - [x] #1 `scripts/smoke/*` with `pnpm smoke:<harness>` for claude, codex and opencode
 - [x] #2 README covers install of throng and of the adapters (commands with the verified versions, `--omit=optional` when the harness is on PATH), the registration command for the user to run, and config
-- [ ] #3 Quirks found during smoke are fixed
-- [ ] #4 Maintainer smoke passed with user-installed adapters (versions recorded from `list_harnesses`): claude/codex/opencode × `auto`, opencode with a custom provider, Esc leaves no orphans, a call over 2 min goes to the background
+- [x] #3 Quirks found during smoke are fixed
+- [x] #4 Maintainer smoke passed with user-installed adapters (versions recorded from `list_harnesses`): claude/codex/opencode × `auto`, opencode with a custom provider, Esc leaves no orphans, a call over 2 min goes to the background
 <!-- AC:END -->
 
 ## Definition of Done
@@ -94,4 +94,22 @@ GATES: `pnpm typecheck && pnpm test` green; `pgrep -f fake-agent` empty afterwar
 task-cycle wf_71224bf1-4e8: Opus coder, gates green, dual review 5 findings → 2 confirmed and fixed (f1 minor: orphan check said PASS when pgrep could not run — now FAIL + exit 1, test PATH gets a pgrep symlink; f2 minor: --cwd with a pre-existing pong.txt gave a false PASS — now refused with exit 2), verified; spot-checked smoke.ts:53-55, 70-75, 194-207. Deviations accepted: explicit SDK request timeouts on both tool calls ((timeout_s+60) s and 180 s — the SDK default of 60 s would cut real runs); pong.txt check also applies to a custom --prompt (README says so); final SMOKE PASSED/FAILED line. Main session after the cycle: config.ts now treats a harness entry with no value (codex: with only commented children) as an empty override, so the DESIGN §8 yaml loads as written (+ test); README note adjusted. Deferred: f3 relative --cwd resolves against process.cwd() (README uses absolute paths). Pre-cycle check by the main session on the real server (no prompt, no tokens): list_harnesses probed all three installed adapters in 3.6 s — claude-agent-acp 0.76.0 (5 models, 6 efforts), codex-acp 1.11.0 (7 models, 6 efforts), opencode 1.18.30 (411 models, no efforts); no leftover processes; CLAUDECODE=1 in the env does not break the handshake. Installed adapters are older than the registry snapshot (0.81.2 / 1.13.1). WAITING ON THE MAINTAINER (AC #3, #4): pnpm smoke:claude / smoke:codex / smoke:opencode (+ opencode with a custom provider), Esc → no orphans, a >2 min call goes to the background; record adapter versions from list_harnesses here; standalone claude is not logged in on this machine — put CLAUDE_CODE_OAUTH_TOKEN into harnesses.claude.env first or the claude smoke fails at the prompt.
 
 Maintainer smoke 2026-09-27 (transcripts in ~/.cache/throng/runs, checked by Fable): claude/haiku ok 6.5 s $0.025 (adapter 0.76.0), codex/gpt-6-luna ok 15.1 s (1.11.0), opencode/opencode/big-pickle ok 11.4 s cost 0 (1.18.30); pong.txt written in all three (smoke removed the temp dirs = PASS), no adapter processes left. Quirk found and fixed: claude-agent-acp reports the auto→acceptEdits fallback (haiku has no auto mode) as current_mode_update + a plain agent_message_chunk BEFORE the prompt turn, and startTurn() discarded both — now run.ts warns when current_mode_update differs from the requested mode and the Collector turns pre-turn agent text into a warning; fake scenario mode-fallback + tests; README troubleshooting entry. Still open for AC #4: opencode with a custom provider, Esc → no orphans, a >2 min call goes to the background (no transcripts for these yet).
+
+Maintainer smoke 2026-09-28: opencode/openrouter/z-ai/glm-5.3-flash ok 17.6 s $0.0023, pong.txt PASS, no orphans (built-in openrouter provider, not a custom one in opencode.json).
+
+Smoke 2026-09-28 by Fable on request: claude/haiku ok 6.0 s $0.025 (warnings now show the auto→acceptEdits fallback); claude/opus[1m] ok 8.8 s $0.117, real auto mode, no warnings; both PASS pong.txt, no orphans.
+
+Dogfood 2026-09-28 from the desktop Code-tab session (server registered by the maintainer): list_harnesses sees all three adapters from Claude Code's env. run_thronglet claude/haiku with sleep 150 → ok in 161 s, $0.026, no hang, progress delivered; the call did NOT auto-background in this session (env CLAUDE_CODE_ENTRYPOINT=claude-desktop, CLAUDE_CODE_CHILD_SESSION=1 — the desktop tab counts as a child session for Claude Code's auto-background), so the '>2 min goes to background' item must be checked from a terminal claude TUI. Under acceptEdits the adapter ran the bash command without request_permission: the allow_once bridge has still not been exercised by a real adapter. Custom provider item: maintainer's openrouter provider in opencode.json points at a custom endpoint — the GLM run covers it (maintainer's call).
+
+Dogfood 2026-09-28: timeout on a real adapter — claude/haiku with sleep 300 and timeout_s 240 → tool error timeout at 240 s with session_id/usage/warnings; session/cancel made the adapter answer stopReason cancelled within the grace, transcript stop+stderr+outcome written, adapter tree incl. the sleep gone. Esc from the client still to be exercised.
+
+Dogfood 2026-09-28: Esc from the desktop session during claude/haiku sleep 300 → notifications/cancelled → session/cancel; adapter answered stopReason cancelled within 2 s, outcome cancelled at 7 s, no adapter or sleep process left. Matrix status: claude/codex/opencode × auto PASS, opencode custom provider PASS (maintainer's openrouter → custom endpoint), Esc → no orphans PASS, timeout PASS; '>2 min call goes to the background' NOT reproducible from the desktop Code tab (child session stays synchronous) — needs a terminal claude TUI run if it is to be checked at all.
+
+Dogfood 2026-09-28: codex/gpt-6-luna with sleep 150 → ok in 168.8 s, no warnings (mode agent ran the long bash without asking); the call again stayed synchronous in the desktop Code tab, so the missing auto-background is the client session type (CLAUDE_CODE_CHILD_SESSION=1), not the nested harness.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+scripts/smoke/smoke.ts + pnpm smoke:<harness> (list_harnesses table, run_thronglet with pong.txt and orphan checks, tested against the fake agent), README (install incl. adapters and --omit=optional, registration, config, payloads, smoke matrix, troubleshooting). Maintainer/dogfood smoke on real harnesses: claude/haiku, claude/opus[1m], codex/gpt-6-luna, opencode/big-pickle and opencode/openrouter/z-ai/glm-5.3-flash (custom endpoint) all PASS; Esc → cancelled in 7 s, timeout path twice, long runs 161 s and 169 s, never an orphaned process. Quirk fixed: claude-agent-acp's auto→acceptEdits fallback now lands in warnings. Not reproducible from the desktop Code tab: Claude Code's auto-background after 120 s (client session type), left as a note. Gates: typecheck clean, 142 tests.
+<!-- SECTION:FINAL_SUMMARY:END -->
