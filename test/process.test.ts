@@ -46,8 +46,8 @@ async function waitFor<T>(what: string, probe: () => T | undefined, timeoutMs = 
   }
 }
 
-async function startGrandchild(): Promise<{ worker: Worker; grandchild: number }> {
-  const spawn = fakeAgentSpawn('grandchild');
+async function startGrandchild(scenario: 'grandchild' | 'grandchild-detached' = 'grandchild'): Promise<{ worker: Worker; grandchild: number }> {
+  const spawn = fakeAgentSpawn(scenario);
   tags.push(spawn.tag);
   const worker = await startWorker(
     { ...spawn, cwd, depth: 0 },
@@ -81,5 +81,14 @@ describe('process tree', () => {
     assert.equal(isAlive(worker.pid), false);
     // A SIGKILLed grandchild stays a zombie until its new parent reaps it, so poll.
     await waitFor('grandchild to die', () => (isAlive(grandchild) ? undefined : true), 2000);
+  });
+
+  it('close kills a grandchild that left the process group (snapshot path)', async () => {
+    const { worker, grandchild } = await startGrandchild('grandchild-detached');
+    // Its own group: the group signals in killTree cannot reach it, only the snapshot can.
+    assert.ok((await snapshotDescendants(worker.pid)).includes(grandchild));
+    await worker.close();
+    assert.equal(isAlive(worker.pid), false);
+    await waitFor('detached grandchild to die', () => (isAlive(grandchild) ? undefined : true), 2000);
   });
 });

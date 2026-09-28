@@ -157,8 +157,11 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
   await send({ sessionUpdate: 'usage_update', used: 100, size: 1000, cost: { amount: Number(session.cost.toFixed(2)), currency: 'USD' } });
 }
 
-if (scenario === 'grandchild') {
-  const child = spawn('sleep', ['300'], { stdio: 'ignore' });
+// grandchild: a plain child, dies with our process group. grandchild-detached: its own group
+// (setsid), like a harness's background helper — only the descendant snapshot reaches it.
+if (scenario === 'grandchild' || scenario === 'grandchild-detached') {
+  const child = spawn('sleep', ['300'], { stdio: 'ignore', detached: scenario === 'grandchild-detached' });
+  child.unref();
   process.stderr.write(`grandchild pid=${child.pid}\n`);
 }
 

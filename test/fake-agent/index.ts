@@ -10,6 +10,7 @@ export type FakeScenario =
   | 'crash-on-prompt'
   | 'fs-call'
   | 'grandchild'
+  | 'grandchild-detached'
   | 'no-resume'
   | 'orphan-exit'
   | 'orphan-crash'
