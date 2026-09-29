@@ -265,6 +265,11 @@ describe('runThronglet', () => {
     assert.deepEqual(payload.warnings, ['warning: fake notice — mode fell back']);
   });
 
+  it('auto: a request_permission the harness still raises is rejected', async () => {
+    const payload = ok(await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('permission').loaded)));
+    assert.equal(payload.text, 'rejected');
+  });
+
   it('a permission-mode fallback announced by the agent lands in warnings, not in text', async () => {
     const payload = ok(await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('mode-fallback').loaded)));
     assert.ok(payload.text?.startsWith('echo: '), payload.text);

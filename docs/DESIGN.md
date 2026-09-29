@@ -264,12 +264,14 @@ The policy comes from config only (§8): a global default and optional per-harne
 
 | policy | native mode | server answer |
 |---|---|---|
-| `auto` | the harness's auto mode (§4.1) | `allow_once` |
+| `auto` | the harness's auto mode (§4.1) | `reject_once`; if absent, `cancelled` (decision-4) |
 | `allow_all` | asking mode | `allow_once` |
 | `deny_all` | asking mode | `reject_once`; if absent, `cancelled` |
 | `elicit` | asking mode | per the user's answer |
 
 Always `*_once`, never `allow_always`: Claude's `allow-with-updates` writes a rule into the project settings.
+
+`auto` trusts the harness's own auto mode and nothing more: what that mode does not approve on its own is refused by the server. Answering `allow_once` there would turn `auto` into `allow_all` whenever a harness asks a lot (Claude's `acceptEdits` fallback, Codex's "potentially unsafe" checks).
 
 `elicit`:
 - At call start check `server.getClientCapabilities()?.elicitation`; missing → tool error `elicitation_unsupported`, no spawn.

@@ -37,7 +37,11 @@ function track<T>(call: Promise<T>): Promise<T> {
 server.registerTool(
   'list_harnesses',
   {
-    description: 'List the harnesses throng can run, with their models, effort levels and the server limits.',
+    description:
+      'Discover valid agent values for run_thronglet (<harness>/<model>[:<effort>]): ' +
+      'available harnesses with their models and effort levels, unavailable ones with the reason and install hint, ' +
+      'and the server limits (concurrency, nesting depth, default timeout). ' +
+      'Probes every harness on each call, takes a few seconds, spends no tokens.',
     inputSchema: listHarnessesInput,
   },
   async () => {

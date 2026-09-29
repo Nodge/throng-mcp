@@ -16,27 +16,28 @@ describe('permissions', () => {
     assert.equal(resolvePolicy(DEFAULT_CONFIG, 'opencode'), 'auto');
   });
 
-  it('auto picks allow_once by kind, never allow_always, and reports the decision', async () => {
+  it('auto rejects: reject_once picked by kind, never reject_always or allow_*, and reports the decision', async () => {
     const decisions: PermissionDecision[] = [];
     const bridge = createPermissionBridge('auto', (d) => decisions.push(d));
     const answer = await bridge.answer(
       request([
         { optionId: 'always-xyz', name: 'Always', kind: 'allow_always' },
         { optionId: 'once-abc', name: 'Allow', kind: 'allow_once' },
-        { optionId: 'no', name: 'Reject', kind: 'reject_once' },
+        { optionId: 'never', name: 'Never', kind: 'reject_always' },
+        { optionId: 'no-def', name: 'Reject', kind: 'reject_once' },
       ]),
     );
-    assert.deepEqual(answer, { outcome: { outcome: 'selected', optionId: 'once-abc' } });
-    assert.deepEqual(decisions, [{ title: 'write notes.txt', kind: 'edit', choice: 'once-abc' }]);
+    assert.deepEqual(answer, { outcome: { outcome: 'selected', optionId: 'no-def' } });
+    assert.deepEqual(decisions, [{ title: 'write notes.txt', kind: 'edit', choice: 'no-def' }]);
   });
 
-  it('auto without an allow_once option answers cancelled', async () => {
+  it('auto without a reject_once option answers cancelled', async () => {
     const decisions: PermissionDecision[] = [];
     const bridge = createPermissionBridge('auto', (d) => decisions.push(d));
     const answer = await bridge.answer(
       request([
         { optionId: 'always', name: 'Always', kind: 'allow_always' },
-        { optionId: 'no', name: 'Reject', kind: 'reject_once' },
+        { optionId: 'yes', name: 'Allow', kind: 'allow_once' },
       ]),
     );
     assert.deepEqual(answer, { outcome: { outcome: 'cancelled' } });

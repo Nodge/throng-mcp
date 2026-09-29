@@ -1,6 +1,6 @@
 # throng
 
-An MCP server for delegating coding tasks to other agents. `run_thronglet` starts Claude Code, Codex or OpenCode over ACP (Agent Client Protocol) in the directory you give it, runs one prompt to completion and returns the agent's final message. `list_harnesses` shows which harnesses are installed, with their models and effort levels. The nested agent edits the live tree at `cwd`: there is no sandbox, worktree or apply-back step. v1 runs every harness in its own auto-approve mode (`permissions: auto`).
+An MCP server for delegating coding tasks to other agents. `run_thronglet` starts Claude Code, Codex or OpenCode over ACP (Agent Client Protocol) in the directory you give it, runs one prompt to completion and returns the agent's final message. `list_harnesses` shows which harnesses are installed, with their models and effort levels. The nested agent edits the live tree at `cwd`: there is no sandbox, worktree or apply-back step. v1 runs every harness in its own auto-approve mode (`permissions: auto`); whatever that mode still asks about, throng refuses.
 
 ## Requirements
 
@@ -137,7 +137,8 @@ Every prompt is prefixed with executor rules (`src/prompt.ts`): do the task your
 Optional: `~/.config/throng/config.yaml`.
 
 ```yaml
-# Permission policy: v1 supports only `auto` (each harness's own auto-approve mode).
+# Permission policy: v1 supports only `auto` (each harness's own auto-approve mode;
+# a permission request the harness still raises is answered reject_once).
 # allow_all | deny_all | elicit are v2; setting them now makes run_thronglet fail with harness_unavailable.
 permissions: auto
 
@@ -209,7 +210,7 @@ Record the adapter versions `list_harnesses` reported in the backlog task notes.
 ## Troubleshooting
 
 - `harness_unavailable`: the adapter isn't on PATH, and the message carries the install command; or the config is broken (message starts with `config error:`): fix the yaml, throng won't run on defaults; or `permissions` is something other than `auto` (v2).
-- A warning `permission mode "auto" not applied: the agent switched to "acceptEdits"`: Claude Code has no auto mode for that model (haiku, for one) and falls back to accept-edits; file edits are still auto-approved, other requests are answered `allow_once` by throng. Pick another model if you need the real auto mode.
+- A warning `permission mode "auto" not applied: the agent switched to "acceptEdits"`: Claude Code has no auto mode for that model (haiku, for one) and falls back to accept-edits; file edits are still auto-approved, anything else the harness asks about is rejected by throng (`auto` never widens into allow-all). Pick another model if you need the real auto mode.
 - `model_rejected`: the model isn't one of the harness's values. Call `list_harnesses` for the current list; they are the harness's own option values and change with harness versions.
 - `handshake_timeout` / `spawn_failed` / `handshake_failed`: the message includes the adapter's stderr. Usual cause is auth: check `claude auth status` (or set `CLAUDE_CODE_OAUTH_TOKEN` in config), `codex login`, `opencode auth login`. Slow first start: raise `limits.handshake_s`.
 - `empty_result`: the agent ended its turn without saying anything; the transcript shows what it did.

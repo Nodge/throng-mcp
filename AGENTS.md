@@ -33,7 +33,7 @@ Work found outside a task's acceptance criteria is not added silently: describe 
 
 - **Fable (main session)**: backlog lifecycle, briefs, review triage, contracts (tool input/output and `ErrorCode` from DESIGN §3, `HarnessDefinition`, the Worker interface) — edits them itself, doesn't delegate; architecture decisions; spikes against real adapters; commits.
 - **Opus (subagents)**: all other code — implementation and post-review fixes via the workflow; as separate agents, one of the two independent reviews and fix verification.
-- **Codex (subagents)**: the second independent review — another model's view of the code; writes code only in the `coder: 'codex'` variant, on the maintainer's explicit request.
+- **Codex (thronglets via the throng MCP server, `codex/gpt-6-sol:high`)**: the second independent review — another model's view of the code; writes code only in the `coder: 'codex'` variant, on the maintainer's explicit request.
 - **Maintainer (human)**: smoke matrix on real harnesses (DESIGN §9; spends tokens), dogfood at the end of the stage, approves new tasks.
 
 ## Code rules
