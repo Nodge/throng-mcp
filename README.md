@@ -60,7 +60,7 @@ opencode/openrouter/anthropic/claude-sonnet-5
 
 - The first path segment is the harness: `claude`, `codex` or `opencode`. The rest is the model as the harness names it (for OpenCode that is `<provider>/<model>`).
 - The suffix is taken as effort only when it is `low | medium | high | xhigh | max`, so a model name with its own `:tag` stays intact.
-- The model must be one of the harness's own values, as listed by `list_harnesses`. Today: claude `default | opus[1m] | claude-fable-5-1 | sonnet | haiku`; codex `gpt-6-astra | gpt-6-sol | gpt-6-luna | gpt-5.6-sol | …`; opencode every `<provider>/<model>` it knows (default `opencode/big-pickle`).
+- The model must be one of the harness's own values, as listed by `list_harnesses`. Today: claude `default | opus[1m] | claude-fable-5-1 | sonnet | haiku`; codex `gpt-6-astra | gpt-6-sol | gpt-6-luna | gpt-5.6-sol | …`; opencode every `<provider>/<model>` it knows (e.g. `openrouter/z-ai/glm-5.3-flash`).
 - Effort is mapped to the harness's effort option: claude takes the level as is; codex too, with `max` falling back to `xhigh` if absent; OpenCode has no effort option, so a suffix there only produces a warning. An effort the harness doesn't offer is a warning, not an error.
 
 ### `run_thronglet`
@@ -203,7 +203,7 @@ Runs one real task against a real harness with your env, config and cache. Spend
 ```bash
 pnpm smoke:claude       # claude/haiku
 pnpm smoke:codex        # codex/gpt-6-luna
-pnpm smoke:opencode     # opencode/opencode/big-pickle
+pnpm smoke:opencode     # opencode/openrouter/z-ai/glm-5.3-flash (needs openrouter configured in opencode)
 pnpm smoke opencode/<provider>/<model>                  # custom provider
 pnpm smoke:claude -- --prompt "…" --cwd /some/dir --timeout 600
 pnpm smoke:claude -- --no-resume                       # skip the resume step

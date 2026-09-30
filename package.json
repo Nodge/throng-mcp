@@ -14,7 +14,7 @@
     "smoke": "node scripts/smoke/smoke.ts",
     "smoke:claude": "node scripts/smoke/smoke.ts claude/haiku",
     "smoke:codex": "node scripts/smoke/smoke.ts codex/gpt-6-luna",
-    "smoke:opencode": "node scripts/smoke/smoke.ts opencode/opencode/big-pickle"
+    "smoke:opencode": "node scripts/smoke/smoke.ts opencode/openrouter/z-ai/glm-5.3-flash"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.5.0",

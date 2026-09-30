@@ -1,11 +1,11 @@
 ---
 id: THRONG-7
 title: resume_thronglet
-status: Review
+status: Done
 assignee:
   - '@fable'
 created_date: '2026-09-27 18:56'
-updated_date: '2026-09-30 16:00'
+updated_date: '2026-09-30 16:04'
 labels: []
 milestone: m-1
 dependencies:
@@ -29,7 +29,7 @@ Scope: DESIGN §3.3, §4.2, §8.
 - [x] #1 `resume_thronglet` matches DESIGN §3.3; harness, model, effort and cwd come from the session record
 - [x] #2 An unknown id or a harness without resume support fails with `session_not_found`
 - [x] #3 fake-agent scenario `resume` remembers a fact from the first prompt and answers it in the second
-- [ ] #4 Smoke: a follow-up question on claude, codex and opencode
+- [x] #4 Smoke: a follow-up question on claude, codex and opencode
 <!-- AC:END -->
 
 ## Definition of Done
@@ -95,4 +95,12 @@ GATES: `pnpm typecheck` exit 0 (check the exit code, not the tail of the output)
 
 <!-- SECTION:NOTES:BEGIN -->
 task-cycle wf_e0fa4d5a-7ee: Opus coder, gates green (156 tests), review: Opus 2 minor findings, both deferred; Codex review did not run (the workflow reads the reviewer's answer from run_thronglet.structured, which is THRONG-6 — single review until then). Deviations accepted: transcript input line written once the request is resolved (harness known); unreadable/corrupt records → session_not_found; fake agent imports EXECUTOR_PREFIX to strip the prefix from stored notes; smoke resume step numbered 7. Main session: f2 (stale Transcript.harness comment) fixed. Deferred f1: two concurrent resume_thronglet calls on the same session_id each spawn an adapter and interleave turns in one harness session — no per-session lock; revisit with THRONG-9 (messages into a running thronglet). Smoke 2026-09-30: opencode/openrouter/z-ai/glm-5.3-flash run 7.4 s + resume 5.5 s → 'pong.txt', PASS, no orphans. claude/codex smoke blocked: claude-agent-acp and codex-acp are no longer installed on the maintainer's machine (npm i -g --omit=optional @agentclientprotocol/claude-agent-acp@0.81.2 @agentclientprotocol/codex-acp@1.13.1); opencode 1.18.31 no longer offers opencode/big-pickle, so the pnpm smoke:opencode default needs a model on the maintainer's list.
+
+Smoke 2026-09-30 after the maintainer reinstalled the adapters: claude/haiku run 6.8 s + resume 2.8 s → 'pong.txt'; codex/gpt-6-luna run 21 s + resume 7.6 s → 'pong.txt'; opencode/openrouter/z-ai/glm-5.3-flash run 7.4 s + resume 5.5 s → 'pong.txt'. All PASS, no orphans. Adapter pids seen in the 'before' snapshot during the runs were transient (gone afterwards), not leftovers. smoke:opencode default switched to opencode/openrouter/z-ai/glm-5.3-flash (maintainer's choice); README updated.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+resume_thronglet per DESIGN §3.3: shared run/resume pipeline in src/run.ts (record → guards → session/resume in a fresh adapter → mode/model/effort re-applied → same payload, same session_id; unknown/corrupt record or a harness without resume → session_not_found), registered in mcp.ts, fake scenario resume-memory with notes on disk, smoke step 7 (follow-up question), README section. Verified: typecheck exit 0, 156/156 tests, smoke follow-up PASS on claude, codex and opencode with no orphans.
+<!-- SECTION:FINAL_SUMMARY:END -->
