@@ -10,8 +10,9 @@ import { loadConfig, type LoadedConfig } from '../src/config.ts';
 import type { RunFailure, RunSuccess } from '../src/contract.ts';
 import { createProgress, noProgress, type Progress, type ProgressNotification } from '../src/progress.ts';
 import { EXECUTOR_PREFIX } from '../src/prompt.ts';
-import { type RunContext, type RunOutcome, runThronglet } from '../src/run.ts';
+import { type RunContext, type RunOutcome, resumeThronglet, runThronglet } from '../src/run.ts';
 import { Semaphore } from '../src/semaphore.ts';
+import { type SessionRecord, writeSessionRecord } from '../src/sessions.ts';
 import type { FakeScenario } from './fake-agent/index.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'throng-run-'));
@@ -59,8 +60,8 @@ function loadYaml(yaml: string): LoadedConfig {
   return loadConfig({ THRONG_MCP_CONFIG: path });
 }
 
-/** Config whose `claude` harness is the fake agent in `scenario`. */
-function fakeClaude(scenario: FakeScenario, extra = ''): { loaded: LoadedConfig; tag: string } {
+/** Config whose `claude` harness is the fake agent in `scenario`; `agentEnv` is added to the adapter's env. */
+function fakeClaude(scenario: FakeScenario, extra = '', agentEnv: Record<string, string> = {}): { loaded: LoadedConfig; tag: string } {
   const tag = `fake-agent-${randomUUID()}`;
   tags.push(tag);
   const loaded = loadYaml(
@@ -69,7 +70,7 @@ function fakeClaude(scenario: FakeScenario, extra = ''): { loaded: LoadedConfig;
       '  claude:',
       `    command: ${JSON.stringify(process.execPath)}`,
       `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
-      `    env: { FAKE_SCENARIO: ${scenario} }`,
+      `    env: ${JSON.stringify({ FAKE_SCENARIO: scenario, ...agentEnv })}`,
       extra,
       '',
     ].join('\n'),
@@ -349,5 +350,135 @@ describe('runThronglet', () => {
       'cancelled',
     );
     assert.ok(sent.some((m) => /^running 0m0\ds$/.test(m)), JSON.stringify(sent));
+  });
+});
+
+describe('resumeThronglet', () => {
+  /** Writes a session record by hand, as a run_thronglet call would have. */
+  async function record(ctx: RunContext, sessionId: string, fields: Partial<SessionRecord> = {}): Promise<void> {
+    const at = new Date().toISOString();
+    const base: SessionRecord = { harness: 'claude', model: 'fake-small', cwd: work, created_at: at, last_used_at: at };
+    await writeSessionRecord(ctx.cacheDir, sessionId, { ...base, ...fields });
+  }
+
+  it('follow-up into the same session: memory kept, model and effort re-applied from the record', async () => {
+    const { loaded, tag } = fakeClaude('resume-memory', '', { FAKE_MEMORY_DIR: mkdtempSync(join(root, 'memory-')) });
+    const ctx = makeCtx(loaded);
+    const first = ok(await runThronglet(input('claude/fake-large:high', { prompt: 'remember: banana' }), ctx));
+    assert.equal(first.text, 'noted [model=fake-large effort=high]');
+    const recordPath = join(ctx.cacheDir, 'sessions', `${first.session_id}.json`);
+    const before = JSON.parse(readFileSync(recordPath, 'utf8'));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const second = ok(await resumeThronglet({ session_id: first.session_id, prompt: 'what did I say?' }, ctx));
+    assert.equal(second.session_id, first.session_id);
+    assert.equal(second.text, 'you said: remember: banana [model=fake-large effort=high]');
+    assert.equal(second.stop_reason, 'end_turn');
+    assert.deepEqual(second.usage, { input_tokens: 10, output_tokens: 5, cost_usd: 0.01 });
+    assert.equal(second.warnings, undefined);
+    assert.equal(tagAlive(tag), false, 'adapter still running');
+
+    const after = JSON.parse(readFileSync(recordPath, 'utf8'));
+    assert.equal(after.created_at, before.created_at);
+    assert.ok(Date.parse(after.last_used_at) > Date.parse(before.last_used_at), `${before.last_used_at} → ${after.last_used_at}`);
+    assert.deepEqual({ ...after, last_used_at: undefined }, { ...before, last_used_at: undefined });
+
+    const runs = readdirSync(join(ctx.cacheDir, 'runs'));
+    assert.equal(runs.length, 2);
+    for (const name of runs) assert.match(name, new RegExp(`-claude-${first.session_id}\\.jsonl$`));
+    const inputs = runs.map((name) => readJsonl(join(ctx.cacheDir, 'runs', name)).find((l) => l.kind === 'input')!);
+    const resumed = inputs.find((l) => l.resume === true)!;
+    assert.ok(resumed, JSON.stringify(inputs));
+    const { ts: _ts, ...line } = resumed;
+    assert.deepEqual(line, { kind: 'input', resume: true, session_id: first.session_id, harness: 'claude', prompt_chars: 15 });
+  });
+
+  it('unknown or unsafe id → session_not_found before spawn', async () => {
+    const { loaded, tag } = fakeClaude('resume-memory');
+    const ctx = makeCtx(loaded);
+    const unknown = failed(await resumeThronglet({ session_id: 'fake-nope', prompt: 'x' }, ctx), 'session_not_found');
+    assert.match(unknown.message, /^no session record for "fake-nope" \(records live 14 days under .*\/sessions\)$/);
+    assert.equal(unknown.session_id, undefined);
+    const unsafe = failed(await resumeThronglet({ session_id: '../etc', prompt: 'x' }, ctx), 'session_not_found');
+    assert.match(unsafe.message, /no session record for "\.\.\/etc"/);
+    assert.equal(tagAlive(tag), false);
+    assert.deepEqual(readdirSync(ctx.cacheDir), [], 'nothing written for a call that never started');
+  });
+
+  it('corrupt record → session_not_found', async () => {
+    const { loaded } = fakeClaude('echo');
+    const ctx = makeCtx(loaded);
+    mkdirSync(join(ctx.cacheDir, 'sessions'));
+    writeFileSync(join(ctx.cacheDir, 'sessions', 'fake-bad.json'), JSON.stringify({ harness: 'gemini', model: 'x', cwd: work }));
+    writeFileSync(join(ctx.cacheDir, 'sessions', 'fake-junk.json'), '{');
+    assert.match(failed(await resumeThronglet({ session_id: 'fake-bad', prompt: 'x' }, ctx), 'session_not_found').message, /corrupt/);
+    assert.match(failed(await resumeThronglet({ session_id: 'fake-junk', prompt: 'x' }, ctx), 'session_not_found').message, /unreadable/);
+  });
+
+  it('harness without resume capability → session_not_found', async () => {
+    const { loaded, tag } = fakeClaude('no-resume');
+    const ctx = makeCtx(loaded);
+    await record(ctx, 'fake-a');
+    const payload = failed(await resumeThronglet({ session_id: 'fake-a', prompt: 'x' }, ctx), 'session_not_found');
+    assert.match(payload.message, /session\/resume/);
+    assert.equal(tagAlive(tag), false);
+  });
+
+  it('adapter rejects the id → session_not_found with its message', async () => {
+    const { loaded, tag } = fakeClaude('resume-memory', '', { FAKE_MEMORY_DIR: mkdtempSync(join(root, 'memory-')) });
+    const ctx = makeCtx(loaded);
+    await record(ctx, 'fake-forgotten');
+    const payload = failed(await resumeThronglet({ session_id: 'fake-forgotten', prompt: 'x' }, ctx), 'session_not_found');
+    assert.match(payload.message, /unknown session fake-forgotten/);
+    assert.equal(tagAlive(tag), false);
+  });
+
+  it('adapter missing → harness_unavailable; record cwd gone → spawn_failed', async () => {
+    const { loaded } = fakeClaude('echo');
+    const ctx = makeCtx(loaded);
+    await record(ctx, 'codex-a', { harness: 'codex', model: 'gpt' });
+    const codex = failed(await resumeThronglet({ session_id: 'codex-a', prompt: 'x' }, ctx), 'harness_unavailable');
+    assert.match(codex.message, /codex-acp not found on PATH; install: npm i -g @agentclientprotocol\/codex-acp/);
+
+    const gone = join(root, `gone-${randomUUID()}`);
+    mkdirSync(gone);
+    await record(ctx, 'fake-gone', { cwd: gone });
+    rmSync(gone, { recursive: true });
+    const spawn = failed(await resumeThronglet({ session_id: 'fake-gone', prompt: 'x' }, ctx), 'spawn_failed');
+    assert.ok(spawn.message.includes(gone), spawn.message);
+  });
+
+  it('timeout → timeout with the session_id, adapter gone', async () => {
+    const { loaded, tag } = fakeClaude('hang');
+    const ctx = makeCtx(loaded);
+    await record(ctx, 'fake-hang');
+    const started = Date.now();
+    const payload = failed(await resumeThronglet({ session_id: 'fake-hang', prompt: 'x', timeout_s: 1 }, ctx), 'timeout');
+    assert.ok(Date.now() - started < 2500, `took ${Date.now() - started} ms`);
+    assert.equal(payload.session_id, 'fake-hang');
+    assert.equal(tagAlive(tag), false, 'adapter still running');
+  });
+
+  it('the guards of a new run apply: unsupported policy, depth', async () => {
+    const denied = fakeClaude('echo', 'permissions: deny_all');
+    const deniedCtx = makeCtx(denied.loaded);
+    await record(deniedCtx, 'fake-a');
+    const policy = failed(await resumeThronglet({ session_id: 'fake-a', prompt: 'x' }, deniedCtx), 'harness_unavailable');
+    assert.match(policy.message, /permissions "deny_all" is not supported yet/);
+
+    const deep = fakeClaude('echo', 'limits: { max_depth: 2 }');
+    const deepCtx = makeCtx(deep.loaded, { depth: 2 });
+    await record(deepCtx, 'fake-a');
+    failed(await resumeThronglet({ session_id: 'fake-a', prompt: 'x' }, deepCtx), 'depth_exceeded');
+    assert.equal(tagAlive(deep.tag), false);
+  });
+
+  it('schema is accepted and ignored with a warning', async () => {
+    const { loaded } = fakeClaude('echo');
+    const ctx = makeCtx(loaded);
+    await record(ctx, 'fake-a');
+    const payload = ok(await resumeThronglet({ session_id: 'fake-a', prompt: 'x', schema: { type: 'object' } }, ctx));
+    assert.ok(payload.text?.startsWith('resumed: echo: '), payload.text);
+    assert.deepEqual(payload.warnings, ['schema is not supported yet (v2); ignored']);
   });
 });

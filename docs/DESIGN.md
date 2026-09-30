@@ -133,7 +133,7 @@ input: {
 output: same as run_thronglet; session_id stays the same
 ```
 
-Harness, model, effort and `cwd` come from the session record (§8): the caller doesn't repeat them. A fresh adapter process picks the session up via `session/resume` (no history replay); the nested session keeps its own context. Unknown id, or the harness can't resume → tool error `session_not_found` (added to `ErrorCode`).
+Harness, model, effort and `cwd` come from the session record (§8): the caller doesn't repeat them. A fresh adapter process picks the session up via `session/resume` (no history replay); the nested session keeps its own context. Since the adapter process is new, the permission mode, model and effort are applied again after `session/resume`, exactly as after `session/new`. Unknown id, or the harness can't resume → tool error `session_not_found` (added to `ErrorCode`).
 
 ### 3.4 `list_harnesses`
 

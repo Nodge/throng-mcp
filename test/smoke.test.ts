@@ -89,11 +89,23 @@ describe('smoke script against the fake agent', () => {
     const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--prompt', 'x'], 'write-pong');
     assert.equal(code, 0, stdout + stderr);
     assert.match(stdout, /PASS: pong\.txt written/);
+    assert.match(stdout, /^\d+\. resume_thronglet session_id=fake-/m);
+    assert.match(stdout, /PASS: resume answered pong\.txt/);
     assert.match(stdout, /adapter processes before: (none|[\d ]+)$/m);
     assert.match(stdout, /PASS: no orphans/);
     assert.match(stdout, /session_id: fake-[0-9a-f-]+/);
     assert.match(stdout, /transcripts: .*cache\/runs/);
     assert.match(stderr, /\[server\] .*throng started/);
+    assert.equal(tagAlive(tag), false, 'fake agent left running');
+  });
+
+  it('--no-resume skips the resume step', async () => {
+    const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--prompt', 'x', '--no-resume'], 'write-pong');
+    assert.equal(code, 0, stdout + stderr);
+    assert.match(stdout, /PASS: pong\.txt written/);
+    assert.match(stdout, /resume step skipped \(--no-resume\)/);
+    assert.doesNotMatch(stdout, /\. resume_thronglet/);
+    assert.match(stdout, /PASS: no orphans/);
     assert.equal(tagAlive(tag), false, 'fake agent left running');
   });
 

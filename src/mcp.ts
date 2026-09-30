@@ -3,11 +3,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { closeAllWorkers } from './acp/worker.ts';
 import { loadConfig, readDepth } from './config.ts';
-import { listHarnessesInput, runThrongletInput } from './contract.ts';
+import { listHarnessesInput, resumeThrongletInput, runThrongletInput } from './contract.ts';
 import { listHarnesses } from './harnesses/probe.ts';
 import { log } from './log.ts';
-import { createProgress } from './progress.ts';
-import { runThronglet } from './run.ts';
+import { createProgress, type ProgressExtra } from './progress.ts';
+import { type RunContext, type RunOutcome, resumeThronglet, runThronglet } from './run.ts';
 import { Semaphore } from './semaphore.ts';
 import { cacheDir, rotate } from './sessions.ts';
 
@@ -63,18 +63,32 @@ server.registerTool(
       'failures are tool errors with {code, message, session_id?, text?, usage?, duration_s, warnings?}.',
     inputSchema: runThrongletInput,
   },
-  async (args, extra) => {
-    const progress = createProgress(extra);
-    const outcome = await track(
-      runThronglet(args, { loaded, depth: readDepth(), semaphore, signal: extra.signal, progress, cacheDir: cache }),
-    );
-    // A progress notification written after the result hits the client as an unknown token. Bounded: done() already
-    // stopped new sends. After an abort the SDK drops the result anyway, so don't wait.
-    if (!extra.signal.aborted) await progress.idle();
-    const content = [{ type: 'text' as const, text: JSON.stringify(outcome.payload) }];
-    return outcome.ok ? { content } : { content, isError: true };
-  },
+  (args, extra) => callRun(extra, (ctx) => runThronglet(args, ctx)),
 );
+
+server.registerTool(
+  'resume_thronglet',
+  {
+    description:
+      'Send a follow-up prompt into an earlier nested session (session_id from run_thronglet / resume_thronglet). ' +
+      'Harness, model, effort and cwd come from the session record; the nested session keeps its own context. ' +
+      'Returns the same payload as run_thronglet with the same session_id; ' +
+      'session_not_found for an unknown id or a harness that cannot resume.',
+    inputSchema: resumeThrongletInput,
+  },
+  (args, extra) => callRun(extra, (ctx) => resumeThronglet(args, ctx)),
+);
+
+/** Shared body of run_thronglet and resume_thronglet: progress, tracking, one JSON text block, isError on failure. */
+async function callRun(extra: ProgressExtra & { signal: AbortSignal }, start: (ctx: RunContext) => Promise<RunOutcome>) {
+  const progress = createProgress(extra);
+  const outcome = await track(start({ loaded, depth: readDepth(), semaphore, signal: extra.signal, progress, cacheDir: cache }));
+  // A progress notification written after the result hits the client as an unknown token. Bounded: done() already
+  // stopped new sends. After an abort the SDK drops the result anyway, so don't wait.
+  if (!extra.signal.aborted) await progress.idle();
+  const content = [{ type: 'text' as const, text: JSON.stringify(outcome.payload) }];
+  return outcome.ok ? { content } : { content, isError: true };
+}
 
 const transport = new StdioServerTransport();
 

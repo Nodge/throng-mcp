@@ -11,7 +11,7 @@ import { isSafeName } from './sessions.ts';
  * says why the adapter did not come up.
  */
 export class Transcript {
-  /** Goes into the file name; set once the agent spec is parsed. */
+  /** Goes into the file name; set once the harness is known (agent spec or session record). */
   harness = 'unknown';
   readonly #dir: string;
   readonly #startedAt: Date;

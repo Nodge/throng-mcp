@@ -2,9 +2,11 @@ import * as acp from '@agentclientprotocol/sdk';
 import type { AgentContext, McpServer, SessionConfigOption, SessionModeState, SessionUpdate, StopReason } from '@agentclientprotocol/sdk';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
+import { EXECUTOR_PREFIX } from '../../src/prompt.ts';
 
 // Minimal ACP agent for tests; no LLM. Scenario via FAKE_SCENARIO (default `echo`), see index.ts.
 // Every echo turn also sends `session_info_update` with `_meta.throngDepth` = the THRONG_MCP_DEPTH it sees.
@@ -23,6 +25,24 @@ interface FakeSession {
 }
 
 const sessions = new Map<string, FakeSession>();
+
+// resume-memory: one call = one fake-agent process, so what a session remembers lives on disk.
+const memoryDir = process.env.FAKE_MEMORY_DIR ?? join(tmpdir(), 'throng-fake-agent');
+const notesPath = (sessionId: string) => join(memoryDir, `${sessionId}.json`);
+
+/** `undefined` when the session has no notes file. */
+async function readNotes(sessionId: string): Promise<string[] | undefined> {
+  try {
+    return (JSON.parse(await readFile(notesPath(sessionId), 'utf8')) as { notes: string[] }).notes;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeNotes(sessionId: string, notes: string[]): Promise<void> {
+  await mkdir(memoryDir, { recursive: true });
+  await writeFile(notesPath(sessionId), JSON.stringify({ notes }));
+}
 
 /** Scenarios that end the turn with something other than end_turn. */
 const STOP_REASONS: Partial<Record<string, StopReason>> = { refuse: 'refusal', 'max-turns': 'max_turn_requests' };
@@ -109,11 +129,29 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
       await say('I will not do that.');
       return;
     case 'write-pong':
-      await writeFile(join(session.cwd, 'pong.txt'), 'pong');
-      await say('done');
+      // Resumed: the follow-up asks which file the first turn created.
+      if (session.resumed) await say('pong.txt');
+      else {
+        await writeFile(join(session.cwd, 'pong.txt'), 'pong');
+        await say('done');
+      }
       session.cost += 0.01;
       await send({ sessionUpdate: 'usage_update', used: 100, size: 1000, cost: { amount: Number(session.cost.toFixed(2)), currency: 'USD' } });
       return;
+    case 'resume-memory': {
+      const notes = (await readNotes(sessionId)) ?? [];
+      const suffix = ` [model=${optionValue(session, 'model')} effort=${optionValue(session, 'effort')}]`;
+      if (session.resumed) await say(`you said: ${notes.join(' | ')}${suffix}`);
+      else {
+        // The note is the task itself, without the executor prefix every prompt carries.
+        const task = text.startsWith(`${EXECUTOR_PREFIX}\n\n`) ? text.slice(EXECUTOR_PREFIX.length + 2) : text;
+        await writeNotes(sessionId, [...notes, task]);
+        await say(`noted${suffix}`);
+      }
+      session.cost += 0.01;
+      await send({ sessionUpdate: 'usage_update', used: 100, size: 1000, cost: { amount: Number(session.cost.toFixed(2)), currency: 'USD' } });
+      return;
+    }
     case 'hang':
       await new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled'))));
       return;
@@ -209,6 +247,9 @@ app
     return { sessionId, modes: modes(session), configOptions: session.configOptions };
   })
   .onRequest('session/resume', async (ctx) => {
+    if (scenario === 'resume-memory' && !(await readNotes(ctx.params.sessionId))) {
+      throw acp.RequestError.invalidParams(undefined, `unknown session ${ctx.params.sessionId}`);
+    }
     const session = freshSession(true, ctx.params.cwd, ctx.params.mcpServers ?? []);
     sessions.set(ctx.params.sessionId, session);
     await earlyUpdate(ctx.params.sessionId, ctx.client);

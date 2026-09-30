@@ -41,7 +41,7 @@ claude mcp add --scope user throng -- node /abs/path/to/throng-mcp/src/mcp.ts
 claude mcp list
 ```
 
-Tool names in Claude Code: `mcp__throng__run_thronglet`, `mcp__throng__list_harnesses`.
+Tool names in Claude Code: `mcp__throng__run_thronglet`, `mcp__throng__resume_thronglet`, `mcp__throng__list_harnesses`.
 
 Check the setup: ask Claude to call `list_harnesses` (each installed adapter is started without a prompt, so it costs no tokens), or run `pnpm smoke claude/haiku` from the repo (spends a few tokens, see [Smoke](#smoke-maintainer)).
 
@@ -79,7 +79,7 @@ The result is one JSON text block. Success:
 
 ```ts
 {
-  session_id: string;    // the harness's own session id (usable with `claude --resume` / `codex resume` by hand)
+  session_id: string;    // the harness's own session id: for resume_thronglet (and `claude --resume` / `codex resume` by hand)
   text?: string;         // the agent's final message (last turn)
   stop_reason: 'end_turn' | 'max_tokens' | 'max_turn_requests';
   usage: { input_tokens?: number; output_tokens?: number; cost_usd?: number };
@@ -106,6 +106,7 @@ Failure is an MCP tool error (`isError: true`) with:
 |---|---|
 | `harness_unavailable` | adapter not found (message has the install command), config error, or unsupported permission policy; checked before spawn |
 | `depth_exceeded` | nested throng calls deeper than `limits.max_depth` |
+| `session_not_found` | resume_thronglet: no session record for the id, or the harness can't resume it |
 | `spawn_failed` | the adapter process could not start, or `cwd` is not a directory |
 | `handshake_timeout` | the adapter didn't finish initialize/session setup within `limits.handshake_s` |
 | `handshake_failed` | the adapter answered the handshake with an error |
@@ -117,9 +118,24 @@ Failure is an MCP tool error (`isError: true`) with:
 | `refusal` | the agent refused (stop_reason `refusal`) |
 | `agent_error` | anything else the adapter reported |
 
-`elicitation_unsupported`, `session_not_found`, `structured_missing`, `structured_invalid` belong to v2 features and don't occur in v1.
+`elicitation_unsupported`, `structured_missing`, `structured_invalid` belong to features not built yet and don't occur today.
 
 Where the fields come from: `text` is the concatenated agent message chunks of the last turn; `session_id` is the ACP session id the adapter returned; `usage` tokens come from the prompt response (summed over turns), `cost_usd` from the adapter's usage updates (claude and opencode report cost, codex doesn't).
+
+### `resume_thronglet`
+
+A follow-up prompt into an earlier nested session, e.g. "now fix what the review found" to the agent that wrote the code.
+
+```ts
+{
+  session_id: string;    // from a previous run_thronglet / resume_thronglet
+  prompt: string;
+  timeout_s?: number;    // default from config limits.timeout_s
+  schema?: object;       // accepted and ignored with a warning, as in run_thronglet
+}
+```
+
+Harness, model, effort and `cwd` come from the session record written by `run_thronglet` (see [Files on disk](#files-on-disk)); the caller doesn't repeat them. Each call starts a fresh adapter process, which picks the session up with ACP `session/resume`: the nested session's context is the harness's own, throng replays no history. Permission mode, model and effort are applied again, as for a new run. The result is the same payload as `run_thronglet`, with the same `session_id`; the same failure codes apply, plus `session_not_found` when there is no record for the id (records live 14 days) or the harness refuses to resume it.
 
 ### What the nested agent is told
 
@@ -130,7 +146,7 @@ Every prompt is prefixed with executor rules (`src/prompt.ts`): do the task your
 - A call running longer than 120 s in an interactive main session is moved to a background task automatically; the result arrives as a notification, stop it with TaskStop. Inside subagents the call stays synchronous.
 - Esc (or TaskStop) cancels the call: throng cancels the nested session and kills the adapter's process tree.
 - throng sends progress notifications (tool calls, agent text, a heartbeat every 30 s), which keep Claude Code's 30-min idle timeout for MCP calls from firing on long turns.
-- Several `run_thronglet` calls can run in parallel, up to `limits.max_concurrency`; the rest wait in a queue (reported as progress).
+- Several `run_thronglet` / `resume_thronglet` calls can run in parallel, up to `limits.max_concurrency`; the rest wait in a queue (reported as progress).
 
 ## Configuration
 
@@ -175,7 +191,7 @@ Auth: the nested harness uses whatever login its CLI has. If `claude auth status
 
 ## Files on disk
 
-- `~/.cache/throng/sessions/<session_id>.json`: one record per session (`harness, model, effort, cwd, created_at, last_used_at`), for `resume_thronglet` in v2.
+- `~/.cache/throng/sessions/<session_id>.json`: one record per session (`harness, model, effort, cwd, created_at, last_used_at`), read by `resume_thronglet`, which updates `last_used_at`.
 - `~/.cache/throng/runs/<ts>-<harness>-<session_id>.jsonl`: transcript of each call: input (prompt length only), every ACP event, permission decisions, adapter stderr tail, outcome. Not returned to the caller; for debugging by hand.
 - Both are rotated at server start: files older than 14 days are deleted.
 - Server logs are short lines on stderr (start/stop, each run's outcome and transcript path, errors); the MCP client decides where they end up.
@@ -190,11 +206,13 @@ pnpm smoke:codex        # codex/gpt-6-luna
 pnpm smoke:opencode     # opencode/opencode/big-pickle
 pnpm smoke opencode/<provider>/<model>                  # custom provider
 pnpm smoke:claude -- --prompt "…" --cwd /some/dir --timeout 600
+pnpm smoke:claude -- --no-resume                       # skip the resume step
 ```
 
 The script starts the server, prints the `list_harnesses` table (versions, model counts, efforts, commands, unavailable reasons, limits), runs `run_thronglet` in a fresh temp dir asking the agent to write `pong.txt`, prints the payload, then checks:
 
 - `PASS: pong.txt written` / `FAIL: …`: the file exists with content `pong`. The check runs with a custom `--prompt` too, so such a prompt should also write `pong.txt`. A `--cwd` that already contains `pong.txt` is refused (exit 2).
+- `PASS: resume answered pong.txt` / `FAIL: resume …`: a `resume_thronglet` into the same session asks which file it created; its payload is printed and the answer must mention `pong.txt`. Skipped when the run failed, or with `--no-resume` (e.g. with a custom `--prompt`).
 - `PASS: no orphans` / `FAIL: orphaned adapter processes: <pids>`: no new `claude-agent-acp`, `codex-acp` or `opencode acp` process is alive 3 s after the client closed. `FAIL: cannot check orphans (…)` when `pgrep` is missing or fails.
 
 Exit code: 0 all passed; 1 a FAIL or a tool error; 2 bad usage, harness unavailable or unknown model (the valid models are printed). Server stderr is prefixed `[server]`, progress `[progress]`. The temp dir is removed on success and kept (path printed) on failure; transcripts are under the printed `transcripts:` path.

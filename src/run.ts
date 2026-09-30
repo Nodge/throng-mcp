@@ -3,9 +3,9 @@ import { statSync } from 'node:fs';
 import { Collector } from './acp/collector.ts';
 import type { Worker, WorkerHooks } from './acp/types.ts';
 import { startWorker } from './acp/worker.ts';
-import { parseAgentSpec } from './agent-spec.ts';
+import { type AgentSpec, parseAgentSpec } from './agent-spec.ts';
 import type { LoadedConfig } from './config.ts';
-import type { RunFailure, RunSuccess, RunThrongletInput } from './contract.ts';
+import { HARNESS_IDS, type HarnessId, type ResumeThrongletInput, type RunFailure, type RunSuccess, type RunThrongletInput } from './contract.ts';
 import { type ErrorCode, type FailureContext, ThrongError, toThrongError } from './errors.ts';
 import { harnessById, loadRegistry } from './harnesses/index.ts';
 import { selectEffort, selectModel } from './harnesses/select.ts';
@@ -14,10 +14,11 @@ import { createPermissionBridge, type PermissionBridge, resolvePolicy } from './
 import type { Progress } from './progress.ts';
 import { buildPrompt } from './prompt.ts';
 import type { Semaphore } from './semaphore.ts';
-import { touchSessionRecord, writeSessionRecord } from './sessions.ts';
+import { readSessionRecord, type SessionRecord, touchSessionRecord, writeSessionRecord } from './sessions.ts';
 import { Transcript } from './transcript.ts';
 
-// One run_thronglet call (DESIGN §3.2, §4.2, §7): guards → semaphore → Worker → auto policy → model/effort → prompt → payload.
+// One run_thronglet / resume_thronglet call (DESIGN §3.2, §3.3, §4.2, §7):
+// guards → semaphore → Worker → auto policy → model/effort → prompt → payload.
 
 export interface RunContext {
   loaded: LoadedConfig;
@@ -45,8 +46,84 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 const QUEUE_WARNING_MS = 1000;
 const STDERR_IN_TRANSCRIPT = 16 * 1024;
 
+/** What to start: a new session from the agent spec, or an earlier one from its session record. */
+type RunRequest = { kind: 'new'; spec: AgentSpec; cwd: string } | { kind: 'resume'; sessionId: string; record: SessionRecord };
+
+/** A tool call as the shared pipeline sees it. */
+interface Call {
+  tool: 'run_thronglet' | 'resume_thronglet';
+  prompt: string;
+  schema: unknown;
+  timeout_s: number | undefined;
+  /** The transcript `input` line, written once the harness is known; never the prompt text. */
+  inputLine: (harness: HarnessId) => Record<string, unknown>;
+  logFields: Record<string, unknown>;
+  /** Throws a ThrongError when there is nothing to start (bad agent spec, no session record). */
+  request: () => Promise<RunRequest>;
+}
+
 /** Never throws: every failure is a `{ ok: false }` payload with an ErrorCode. */
-export async function runThronglet(input: RunThrongletInput, ctx: RunContext): Promise<RunOutcome> {
+export function runThronglet(input: RunThrongletInput, ctx: RunContext): Promise<RunOutcome> {
+  return execute(
+    {
+      tool: 'run_thronglet',
+      prompt: input.prompt,
+      schema: input.schema,
+      timeout_s: input.timeout_s,
+      inputLine: () => ({
+        agent: input.agent,
+        cwd: input.cwd,
+        prompt_chars: input.prompt.length,
+        ...(input.timeout_s !== undefined ? { timeout_s: input.timeout_s } : {}),
+        ...(input.schema !== undefined ? { schema: true } : {}),
+      }),
+      logFields: { agent: input.agent },
+      request: async () => ({ kind: 'new', spec: parseAgentSpec(input.agent), cwd: input.cwd }),
+    },
+    ctx,
+  );
+}
+
+/** DESIGN §3.3: harness, model, effort and cwd come from the session record. Never throws, like runThronglet. */
+export function resumeThronglet(input: ResumeThrongletInput, ctx: RunContext): Promise<RunOutcome> {
+  return execute(
+    {
+      tool: 'resume_thronglet',
+      prompt: input.prompt,
+      schema: input.schema,
+      timeout_s: input.timeout_s,
+      inputLine: (harness) => ({
+        resume: true,
+        session_id: input.session_id,
+        harness,
+        prompt_chars: input.prompt.length,
+        ...(input.timeout_s !== undefined ? { timeout_s: input.timeout_s } : {}),
+        ...(input.schema !== undefined ? { schema: true } : {}),
+      }),
+      logFields: { session_id: input.session_id },
+      request: async () => ({ kind: 'resume', sessionId: input.session_id, record: await loadRecord(ctx.cacheDir, input.session_id) }),
+    },
+    ctx,
+  );
+}
+
+/** Any record we can't use is `session_not_found`: missing, unsafe id, unreadable or corrupt file. */
+async function loadRecord(dir: string, sessionId: string): Promise<SessionRecord> {
+  const id = JSON.stringify(sessionId);
+  let record: SessionRecord | undefined;
+  try {
+    record = await readSessionRecord(dir, sessionId);
+  } catch (err) {
+    throw new ThrongError('session_not_found', `session record for ${id} is unreadable: ${errorText(err)}`);
+  }
+  if (!record) throw new ThrongError('session_not_found', `no session record for ${id} (records live 14 days under ${dir}/sessions)`);
+  if (!(HARNESS_IDS as readonly unknown[]).includes(record.harness) || typeof record.model !== 'string' || typeof record.cwd !== 'string') {
+    throw new ThrongError('session_not_found', `session record for ${id} is corrupt: ${JSON.stringify(record)}`);
+  }
+  return record;
+}
+
+async function execute(call: Call, ctx: RunContext): Promise<RunOutcome> {
   const now = ctx.now ?? Date.now;
   const t0 = now();
   let waitedMs = 0;
@@ -83,25 +160,22 @@ export async function runThronglet(input: RunThrongletInput, ctx: RunContext): P
   /** `p`, unless the call is cancelled or times out first. */
   const guard = <T>(p: Promise<T>): Promise<T> => Promise.race([p, stopped]);
 
-  transcript.write('input', {
-    agent: input.agent,
-    cwd: input.cwd,
-    prompt_chars: input.prompt.length,
-    ...(input.timeout_s !== undefined ? { timeout_s: input.timeout_s } : {}),
-    ...(input.schema !== undefined ? { schema: true } : {}),
-  });
-
-  const execute = async (): Promise<RunSuccess> => {
-    const spec = parseAgentSpec(input.agent);
-    transcript.harness = spec.harness;
-    if (input.schema !== undefined) warnings.push('schema is not supported yet (v2); ignored');
+  const run = async (): Promise<RunSuccess> => {
+    const request = await call.request();
+    const target =
+      request.kind === 'new'
+        ? { harness: request.spec.harness, model: request.spec.model, effort: request.spec.effort, cwd: request.cwd }
+        : request.record;
+    transcript.harness = target.harness;
+    transcript.write('input', call.inputLine(target.harness));
+    if (call.schema !== undefined) warnings.push('schema is not supported yet (v2); ignored');
 
     // Guards, all before spawn.
     const { loaded } = ctx;
     // A broken config might have meant a stricter policy: never run on the defaults.
     if (loaded.error) throw new ThrongError('harness_unavailable', `config error: ${loaded.error}`);
     const { config } = loaded;
-    const policy = resolvePolicy(config, spec.harness);
+    const policy = resolvePolicy(config, target.harness);
     if (policy !== 'auto') {
       throw new ThrongError('harness_unavailable', `permissions "${policy}" is not supported yet (v2); set permissions: auto`);
     }
@@ -114,11 +188,14 @@ export async function runThronglet(input: RunThrongletInput, ctx: RunContext): P
         `nested run would be at depth ${ctx.depth + 1}, max_depth is ${maxDepth} (this server runs at depth ${ctx.depth})`,
       );
     }
-    const def = harnessById(spec.harness);
+    const def = harnessById(target.harness);
     const resolution = def.resolve(config, loadRegistry(), ctx.env);
     if (!resolution.available) throw new ThrongError('harness_unavailable', resolution.reason);
     // spawn would fail with ENOENT anyway; checking first gives a message that names the cause.
-    if (!isDirectory(input.cwd)) throw new ThrongError('spawn_failed', `cwd does not exist or is not a directory: ${input.cwd}`);
+    if (!isDirectory(target.cwd)) {
+      const what = request.kind === 'resume' ? "the session record's cwd" : 'cwd';
+      throw new ThrongError('spawn_failed', `${what} does not exist or is not a directory: ${target.cwd}`);
+    }
 
     // Queue wait counts neither toward timeout_s nor toward duration_s (DESIGN §7).
     const queuedAt = now();
@@ -134,7 +211,7 @@ export async function runThronglet(input: RunThrongletInput, ctx: RunContext): P
     if (ctx.signal.aborted) onClientAbort();
     else ctx.signal.addEventListener('abort', onClientAbort, { once: true });
     if (stop.signal.aborted) throw stop.signal.reason;
-    const timeoutS = input.timeout_s ?? config.limits.timeout_s;
+    const timeoutS = call.timeout_s ?? config.limits.timeout_s;
     timer = setTimeout(() => halt('timeout', `timed out after ${timeoutS} s`), Math.min(timeoutS * 1000, MAX_TIMER_MS));
     ctx.progress.started();
 
@@ -148,8 +225,10 @@ export async function runThronglet(input: RunThrongletInput, ctx: RunContext): P
       },
     };
     const starting = startWorker(
-      { command: launch.command, args: launch.args, env: { ...launch.env, ...setup.env }, cwd: input.cwd, depth: ctx.depth },
-      { kind: 'new', cwd: input.cwd, mcpServers: [], ...(setup.newSessionMeta ? { meta: setup.newSessionMeta } : {}) },
+      { command: launch.command, args: launch.args, env: { ...launch.env, ...setup.env }, cwd: target.cwd, depth: ctx.depth },
+      request.kind === 'new'
+        ? { kind: 'new', cwd: target.cwd, mcpServers: [], ...(setup.newSessionMeta ? { meta: setup.newSessionMeta } : {}) }
+        : { kind: 'resume', sessionId: request.sessionId, cwd: target.cwd, mcpServers: [] },
       hooks,
       { handshakeMs: config.limits.handshake_s * 1000, ...(ctx.exitGraceMs !== undefined ? { exitGraceMs: ctx.exitGraceMs } : {}) },
     );
@@ -167,32 +246,35 @@ export async function runThronglet(input: RunThrongletInput, ctx: RunContext): P
 
     sessionId = worker.session.sessionId;
     transcript.open(sessionId);
-    const createdAt = new Date(now()).toISOString();
-    await writeSessionRecord(ctx.cacheDir, sessionId, {
-      harness: spec.harness,
-      model: spec.model,
-      ...(spec.effort ? { effort: spec.effort } : {}),
-      cwd: input.cwd,
-      created_at: createdAt,
-      last_used_at: createdAt,
-    }).catch((err: unknown) => {
-      log.warn('session record not written', { session: sessionId, error: errorText(err) });
-      warnings.push(`session record not written (${errorText(err)}); resume_thronglet will not find this session`);
-    });
+    if (request.kind === 'new') {
+      const createdAt = new Date(now()).toISOString();
+      await writeSessionRecord(ctx.cacheDir, sessionId, {
+        harness: target.harness,
+        model: target.model,
+        ...(target.effort ? { effort: target.effort } : {}),
+        cwd: target.cwd,
+        created_at: createdAt,
+        last_used_at: createdAt,
+      }).catch((err: unknown) => {
+        log.warn('session record not written', { session: sessionId, error: errorText(err) });
+        warnings.push(`session record not written (${errorText(err)}); resume_thronglet will not find this session`);
+      });
+    }
 
+    // A fresh adapter process starts in its defaults, so a resumed session gets mode, model and effort again (§3.3).
     // The mode is the policy's teeth: failing to set it fails the run. Model before effort: effort values may depend on it.
     if (setup.modeId) {
       requestedMode = setup.modeId;
       await guard(worker.setMode(setup.modeId));
     }
-    await guard(selectModel(worker, spec.model));
-    if (spec.effort) {
-      const warning = await guard(selectEffort(def, worker, spec.effort));
+    await guard(selectModel(worker, target.model));
+    if (target.effort) {
+      const warning = await guard(selectEffort(def, worker, target.effort));
       if (warning) warnings.push(warning);
     }
 
     collector.startTurn();
-    const prompting = worker.prompt(buildPrompt(input.prompt));
+    const prompting = worker.prompt(buildPrompt(call.prompt));
     prompting.catch(() => {});
     let response: PromptResponse;
     try {
@@ -277,7 +359,7 @@ export async function runThronglet(input: RunThrongletInput, ctx: RunContext): P
 
   let outcome: RunOutcome;
   try {
-    outcome = { ok: true, payload: await execute() };
+    outcome = { ok: true, payload: await run() };
   } catch (err) {
     outcome = { ok: false, payload: failure(err) };
   }
@@ -311,8 +393,8 @@ export async function runThronglet(input: RunThrongletInput, ctx: RunContext): P
   } catch (err) {
     log.error('run cleanup failed', { error: errorText(err) });
   }
-  log.info('run_thronglet done', {
-    agent: input.agent,
+  log.info(`${call.tool} done`, {
+    ...call.logFields,
     code: outcome.ok ? 'ok' : outcome.payload.code,
     session: sessionId,
     duration_s: outcome.payload.duration_s,

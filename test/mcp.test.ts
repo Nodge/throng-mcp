@@ -122,7 +122,7 @@ async function callListHarnesses(env: Record<string, string>): Promise<{ tools: 
 describe('mcp server over stdio', () => {
   it('without adapters on PATH: every harness unavailable with its install hint, default limits', async () => {
     const { tools, out } = await callListHarnesses(serverEnv({}));
-    assert.deepEqual(tools, ['list_harnesses', 'run_thronglet']);
+    assert.deepEqual(tools, ['list_harnesses', 'run_thronglet', 'resume_thronglet']);
     assert.deepEqual(out.harnesses, []);
     assertInstallHints(out.unavailable, ['claude', 'codex', 'opencode']);
     assert.deepEqual(out.limits, { max_concurrency: 10, max_depth: 2, default_timeout_s: 21600, current_depth: 0 });
@@ -246,8 +246,11 @@ describe('mcp server over stdio', () => {
 });
 
 describe('run_thronglet over stdio', () => {
-  /** Server whose `claude` harness is the fake agent in `scenario`; `tag` finds its adapter processes. */
-  async function connect(scenario: string): Promise<{ client: Client; tag: string; close: () => Promise<void> }> {
+  /** Server whose `claude` harness is the fake agent in `scenario` (plus `agentEnv`); `tag` finds its adapter processes. */
+  async function connect(
+    scenario: string,
+    agentEnv: Record<string, string> = {},
+  ): Promise<{ client: Client; tag: string; close: () => Promise<void> }> {
     const tag = newTag();
     const config = writeConfig(
       `run-${tag}.yaml`,
@@ -256,7 +259,7 @@ describe('run_thronglet over stdio', () => {
         '  claude:',
         `    command: ${JSON.stringify(process.execPath)}`,
         `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
-        `    env: { FAKE_SCENARIO: ${scenario} }`,
+        `    env: ${JSON.stringify({ FAKE_SCENARIO: scenario, ...agentEnv })}`,
         '',
       ].join('\n'),
     );
@@ -340,6 +343,31 @@ describe('run_thronglet over stdio', () => {
       );
       assert.equal(result.isError, undefined);
       assert.ok(messages.includes('read README.md'), JSON.stringify(messages));
+    } finally {
+      await close();
+    }
+  });
+
+  it('resume_thronglet: follow-up into the same session; an unknown id is a session_not_found tool error', async () => {
+    const { client, tag, close } = await connect('resume-memory', { FAKE_MEMORY_DIR: mkdtempSync(join(dir, 'memory-')) });
+    try {
+      const run = await client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'remember: banana', cwd: repo } });
+      assert.equal(run.isError, undefined);
+      const first = payloadOf(run) as RunSuccess;
+
+      const resumed = await client.callTool({ name: 'resume_thronglet', arguments: { session_id: first.session_id, prompt: 'what did I say?' } });
+      assert.equal(resumed.isError, undefined);
+      assert.equal(resumed.structuredContent, undefined);
+      const second = payloadOf(resumed) as RunSuccess;
+      assert.equal(second.session_id, first.session_id);
+      assert.ok(second.text?.startsWith('you said: remember: banana'), second.text);
+
+      const unknown = await client.callTool({ name: 'resume_thronglet', arguments: { session_id: 'fake-nope', prompt: 'x' } });
+      assert.equal(unknown.isError, true);
+      const failure = payloadOf(unknown) as RunFailure;
+      assert.equal(failure.code, 'session_not_found');
+      assert.match(failure.message, /no session record for "fake-nope"/);
+      assert.equal(tagAlive(tag), false);
     } finally {
       await close();
     }

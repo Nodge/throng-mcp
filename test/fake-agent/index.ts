@@ -20,7 +20,8 @@ export type FakeScenario =
   | 'empty'
   | 'refuse'
   | 'max-turns'
-  | 'write-pong';
+  | 'write-pong'
+  | 'resume-memory';
 
 const agentPath = fileURLToPath(new URL('./agent.ts', import.meta.url));
 

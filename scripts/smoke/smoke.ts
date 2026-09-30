@@ -12,12 +12,14 @@ import type { ListHarnessesOutput, RunFailure, RunSuccess } from '../../src/cont
 import { cacheDir } from '../../src/sessions.ts';
 
 // Manual smoke against a REAL harness (DESIGN §9): starts `node src/mcp.ts` with the user's own env, config and cache,
-// runs list_harnesses and one run_thronglet, then checks the file the agent wrote and that no adapter process is left.
+// runs list_harnesses and one run_thronglet, checks the file the agent wrote, asks a resume_thronglet follow-up about it,
+// and checks that no adapter process is left.
 // Spends tokens: run by hand, one harness at a time. Exit: 0 pass, 1 any FAIL or tool error, 2 usage/availability.
 
-const USAGE = 'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>]';
+const USAGE = 'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-resume]';
 const DEFAULT_PROMPT =
   'Create a file named pong.txt in the current directory containing exactly the word pong (no newline needed), then reply with the single word: done.';
+const RESUME_PROMPT = 'Which file did you create in the previous step? Reply with the bare file name only.';
 const DEFAULT_TIMEOUT_S = 300;
 const ADAPTER_PATTERNS = ['claude-agent-acp', 'codex-acp', 'opencode acp'];
 const repo = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -34,7 +36,7 @@ try {
   parsed = parseArgs({
     args: process.argv.slice(2).filter((a) => a !== '--'),
     allowPositionals: true,
-    options: { prompt: { type: 'string' }, cwd: { type: 'string' }, timeout: { type: 'string' } },
+    options: { prompt: { type: 'string' }, cwd: { type: 'string' }, timeout: { type: 'string' }, 'no-resume': { type: 'boolean' } },
   });
 } catch (err) {
   usage(err instanceof Error ? err.message : String(err));
@@ -81,6 +83,21 @@ function adapterPids(): Set<number> {
 function textOf(result: Record<string, unknown>): string {
   const content = result.content as Array<{ type: string; text?: string }> | undefined;
   return content?.[0]?.text ?? '';
+}
+
+/** Prints the fields of a run_thronglet / resume_thronglet result. */
+function printResult(result: Record<string, unknown>): { isError: boolean; payload: Partial<RunSuccess & RunFailure> } {
+  const isError = result.isError === true;
+  const payload = JSON.parse(textOf(result)) as Partial<RunSuccess & RunFailure>;
+  console.log(`   isError: ${isError}`);
+  if (isError) console.log(`   code: ${payload.code}\n   message: ${payload.message}`);
+  console.log(`   session_id: ${payload.session_id ?? '-'}`);
+  console.log(`   stop_reason: ${payload.stop_reason ?? '-'}`);
+  console.log(`   duration_s: ${payload.duration_s}`);
+  console.log(`   usage: ${JSON.stringify(payload.usage ?? {})}`);
+  console.log(`   warnings: ${JSON.stringify(payload.warnings ?? [])}`);
+  console.log(`   text: ${JSON.stringify((payload.text ?? '').slice(0, 400))}`);
+  return { isError, payload };
 }
 
 function table(rows: string[][]): string {
@@ -153,16 +170,7 @@ try {
     );
 
     say('result');
-    const isError = result.isError === true;
-    const payload = JSON.parse(textOf(result)) as Partial<RunSuccess & RunFailure>;
-    console.log(`   isError: ${isError}`);
-    if (isError) console.log(`   code: ${payload.code}\n   message: ${payload.message}`);
-    console.log(`   session_id: ${payload.session_id ?? '-'}`);
-    console.log(`   stop_reason: ${payload.stop_reason ?? '-'}`);
-    console.log(`   duration_s: ${payload.duration_s}`);
-    console.log(`   usage: ${JSON.stringify(payload.usage ?? {})}`);
-    console.log(`   warnings: ${JSON.stringify(payload.warnings ?? [])}`);
-    console.log(`   text: ${JSON.stringify((payload.text ?? '').slice(0, 400))}`);
+    const { isError, payload } = printResult(result);
     if (isError) fails.push(`run_thronglet failed with ${payload.code}`);
 
     say('check pong.txt');
@@ -177,6 +185,26 @@ try {
       'pong.txt written',
       content === undefined ? `pong.txt not found in ${cwd}` : `pong.txt contains ${JSON.stringify(content.slice(0, 100))}, expected pong`,
     );
+
+    if (values['no-resume']) {
+      console.log('   resume step skipped (--no-resume)');
+    } else if (isError || !payload.session_id) {
+      console.log('   resume step skipped: run_thronglet failed');
+    } else {
+      say(`resume_thronglet session_id=${payload.session_id} timeout_s=${timeoutS}`);
+      const resumed = await client.callTool(
+        { name: 'resume_thronglet', arguments: { session_id: payload.session_id, prompt: RESUME_PROMPT, timeout_s: timeoutS } },
+        CallToolResultSchema,
+        { onprogress: (p) => void process.stderr.write(`[progress] ${p.progress} ${p.message ?? ''}\n`), timeout: (timeoutS + 60) * 1000 },
+      );
+      const follow = printResult(resumed);
+      const text = follow.payload.text ?? '';
+      check(
+        !follow.isError && text.includes('pong.txt'),
+        'resume answered pong.txt',
+        follow.isError ? `resume failed with ${follow.payload.code}` : `resume answered ${JSON.stringify(text.slice(0, 100))}, expected pong.txt`,
+      );
+    }
   }
 } catch (err) {
   console.log(`FAIL: ${err instanceof Error ? err.message : String(err)}`);
