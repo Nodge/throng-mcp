@@ -21,7 +21,11 @@ export type FakeScenario =
     | 'refuse'
     | 'max-turns'
     | 'write-pong'
-    | 'resume-memory';
+    | 'resume-memory'
+    | 'submit-valid'
+    | 'submit-invalid-then-valid'
+    | 'submit-missing'
+    | 'submit-invalid-always';
 
 const agentPath = fileURLToPath(new URL('./agent.ts', import.meta.url));
 

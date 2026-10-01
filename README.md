@@ -65,7 +65,7 @@ opencode/openrouter/anthropic/claude-sonnet-5
   prompt: string;        // self-contained: the nested session doesn't see your conversation
   cwd: string;           // absolute; the harness works (and edits) there
   timeout_s?: number;    // default 21600 (6 h), from config limits.timeout_s
-  schema?: object;       // v2; accepted in v1 and ignored with a warning
+  schema?: object;       // JSON Schema (draft-07 or 2020-12): the result comes back as `structured`, see below
 }
 ```
 
@@ -74,11 +74,12 @@ The result is one JSON text block. Success:
 ```ts
 {
   session_id: string;    // the harness's own session id: for resume_thronglet (and `claude --resume` / `codex resume` by hand)
-  text?: string;         // the agent's final message (last turn)
+  text?: string;         // the agent's final message (last turn); omitted when `structured` is returned
+  structured?: unknown;  // with schema: the result the agent submitted, valid against the schema
   stop_reason: 'end_turn' | 'max_tokens' | 'max_turn_requests';
   usage: { input_tokens?: number; output_tokens?: number; cost_usd?: number };
   duration_s: number;
-  warnings?: string[];   // adapter notices, effort not applied, ignored schema, …
+  warnings?: string[];   // adapter notices, effort not applied, …
 }
 ```
 
@@ -109,10 +110,14 @@ Failure is an MCP tool error (`isError: true`) with:
 | `cancelled` | the client cancelled the call (Esc, TaskStop) or the agent cancelled its turn |
 | `transport_lost` | the adapter exited or closed its stdio mid-run |
 | `empty_result` | the turn ended without a single agent message |
+| `structured_missing` | with schema: the agent never called `submit_result`, even after 2 corrective prompts |
+| `structured_invalid` | with schema: the last `submit_result` was rejected after 2 corrective prompts; message has the ajv errors |
 | `refusal` | the agent refused (stop_reason `refusal`) |
 | `agent_error` | anything else the adapter reported |
 
-`elicitation_unsupported`, `structured_missing`, `structured_invalid` belong to features not built yet and don't occur today.
+`elicitation_unsupported` belongs to a feature not built yet and doesn't occur today.
+
+With `schema`, throng gives the nested session a small MCP server, `throng_result`, with one tool, `submit_result`, and tells the agent to finish by calling it with a result matching the schema (the schema goes into the prompt verbatim). The tool validates with ajv and returns the errors to the agent, which fixes the result within the same turn. A turn that ends without a valid result gets a corrective prompt, at most 2; then the call fails with `structured_missing` or `structured_invalid`, carrying `text` (what the agent said) and `session_id`, so you can `resume_thronglet` the session. A schema ajv can't compile is rejected as invalid input before anything starts.
 
 Where the fields come from: `text` is the concatenated agent message chunks of the last turn; `session_id` is the ACP session id the adapter returned; `usage` tokens come from the prompt response (summed over turns), `cost_usd` from the adapter's usage updates (claude and opencode report cost, codex doesn't).
 
@@ -125,7 +130,7 @@ A follow-up prompt into an earlier nested session, e.g. "now fix what the review
   session_id: string;    // from a previous run_thronglet / resume_thronglet
   prompt: string;
   timeout_s?: number;    // default from config limits.timeout_s
-  schema?: object;       // accepted and ignored with a warning, as in run_thronglet
+  schema?: object;       // structured output, as in run_thronglet
 }
 ```
 
@@ -186,17 +191,20 @@ Runs one real task against a real harness with your env, config and cache. Spend
 ```bash
 pnpm smoke:claude       # claude/haiku
 pnpm smoke:codex        # codex/gpt-6-luna
+pnpm smoke:codex-schema # codex/gpt-6-luna with --schema (structured output)
 pnpm smoke:opencode     # opencode/openrouter/z-ai/glm-5.3-flash (needs openrouter configured in opencode)
 pnpm smoke opencode/<provider>/<model>                  # custom provider
 pnpm smoke:claude -- --prompt "…" --cwd /some/dir --timeout 600
 pnpm smoke:claude -- --no-resume                       # skip the resume step
+pnpm smoke:claude -- --schema                          # run_thronglet with a schema {file, content}
 ```
 
 The script starts the server, prints the `list_harnesses` table (versions, model counts, efforts, commands, unavailable reasons, limits), runs `run_thronglet` in a fresh temp dir asking the agent to write `pong.txt`, prints the payload, then checks:
 
 - `PASS: pong.txt written` / `FAIL: …`: the file exists with content `pong`. The check runs with a custom `--prompt` too, so such a prompt should also write `pong.txt`. A `--cwd` that already contains `pong.txt` is refused (exit 2).
+- `PASS: structured is {file: pong.txt, content: pong}` / `FAIL: structured is …`: with `--schema` only; the run asks for the created file's name and content as structured output, and the payload's `structured` must match.
 - `PASS: resume answered pong.txt` / `FAIL: resume …`: a `resume_thronglet` into the same session asks which file it created; its payload is printed and the answer must mention `pong.txt`. Skipped when the run failed, or with `--no-resume` (e.g. with a custom `--prompt`).
-- `PASS: no orphans` / `FAIL: orphaned adapter processes: <pids>`: no new `claude-agent-acp`, `codex-acp` or `opencode acp` process is alive 3 s after the client closed. `FAIL: cannot check orphans (…)` when `pgrep` is missing or fails.
+- `PASS: no orphans` / `FAIL: orphaned adapter processes: <pids>`: no new `claude-agent-acp`, `codex-acp`, `opencode acp` or `submit-tool` process is alive 3 s after the client closed. `FAIL: cannot check orphans (…)` when `pgrep` is missing or fails.
 
 Exit code: 0 all passed; 1 a FAIL or a tool error; 2 bad usage, harness unavailable or unknown model (the valid models are printed). Server stderr is prefixed `[server]`, progress `[progress]`. The temp dir is removed on success and kept (path printed) on failure.
 

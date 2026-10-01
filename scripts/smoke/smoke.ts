@@ -12,17 +12,36 @@ import type { ListHarnessesOutput, RunFailure, RunSuccess } from '../../src/cont
 
 // Manual smoke against a REAL harness (DESIGN §9): starts `node src/mcp.ts` with the user's own env, config and cache,
 // runs list_harnesses and one run_thronglet, checks the file the agent wrote, asks a resume_thronglet follow-up about it,
-// and checks that no adapter process is left.
+// and checks that no adapter process is left. With --schema the run_thronglet step asks for structured output
+// (DESIGN §6) and checks `structured` as well.
 // Spends tokens: run by hand, one harness at a time. Exit: 0 pass, 1 any FAIL or tool error, 2 usage/availability.
 
 const USAGE =
-    'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-resume]';
+    'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-resume] [--schema]';
 const DEFAULT_PROMPT =
     'Create a file named pong.txt in the current directory containing exactly the word pong (no newline needed), then reply with the single word: done.';
+const SCHEMA_PROMPT =
+    'Create a file named pong.txt in the current directory containing exactly the word pong (no newline needed). ' +
+    'The result is the name of the file you created (`file`) and its content (`content`).';
+const SMOKE_SCHEMA = {
+    type: 'object',
+    properties: { file: { type: 'string' }, content: { type: 'string' } },
+    required: ['file', 'content'],
+};
 const RESUME_PROMPT = 'Which file did you create in the previous step? Reply with the bare file name only.';
 const DEFAULT_TIMEOUT_S = 300;
-const ADAPTER_PATTERNS = ['claude-agent-acp', 'codex-acp', 'opencode acp'];
+// submit-tool: the structured-output server the harness spawns; its argv carries the run's temp dir under our TMPDIR.
+const ADAPTER_PATTERNS = [
+    'claude-agent-acp',
+    'codex-acp',
+    'opencode acp',
+    `submit-tool\\.ts --schema ${escapeRegex(join(tmpdir(), 'throng-'))}`,
+];
 const repo = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+
+function escapeRegex(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function usage(message?: string): never {
     if (message) console.error(message);
@@ -41,6 +60,7 @@ try {
             cwd: { type: 'string' },
             timeout: { type: 'string' },
             'no-resume': { type: 'boolean' },
+            schema: { type: 'boolean' },
         },
     });
 } catch (err) {
@@ -105,6 +125,7 @@ function printResult(result: Record<string, unknown>): { isError: boolean; paylo
     console.log(`   usage: ${JSON.stringify(payload.usage ?? {})}`);
     console.log(`   warnings: ${JSON.stringify(payload.warnings ?? [])}`);
     console.log(`   text: ${JSON.stringify((payload.text ?? '').slice(0, 400))}`);
+    if (payload.structured !== undefined) console.log(`   structured: ${JSON.stringify(payload.structured)}`);
     return { isError, payload };
 }
 
@@ -191,11 +212,18 @@ try {
             cwd = mkdtempSync(join(tmpdir(), 'throng-smoke-'));
             createdCwd = true;
         }
-        say(`run_thronglet agent=${agent} cwd=${cwd} timeout_s=${timeoutS}`);
+        const withSchema = values.schema === true;
+        say(`run_thronglet agent=${agent} cwd=${cwd} timeout_s=${timeoutS}${withSchema ? ' schema' : ''}`);
         const result = await client.callTool(
             {
                 name: 'run_thronglet',
-                arguments: { agent, prompt: values.prompt ?? DEFAULT_PROMPT, cwd, timeout_s: timeoutS },
+                arguments: {
+                    agent,
+                    prompt: values.prompt ?? (withSchema ? SCHEMA_PROMPT : DEFAULT_PROMPT),
+                    cwd,
+                    timeout_s: timeoutS,
+                    ...(withSchema ? { schema: SMOKE_SCHEMA } : {}),
+                },
             },
             CallToolResultSchema,
             {
@@ -208,6 +236,18 @@ try {
         say('result');
         const { isError, payload } = printResult(result);
         if (isError) fails.push(`run_thronglet failed with ${payload.code}`);
+
+        if (withSchema && !isError) {
+            say('check structured');
+            const structured = payload.structured as { file?: unknown; content?: unknown } | undefined;
+            check(
+                structured?.file === 'pong.txt' &&
+                    typeof structured.content === 'string' &&
+                    structured.content.trim() === 'pong',
+                'structured is {file: pong.txt, content: pong}',
+                `structured is ${JSON.stringify(structured)}, expected {file: pong.txt, content: pong}`
+            );
+        }
 
         say('check pong.txt');
         let content: string | undefined;

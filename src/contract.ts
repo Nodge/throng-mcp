@@ -10,6 +10,9 @@ export type HarnessId = (typeof HARNESS_IDS)[number];
 
 export type StopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal';
 
+/** A JSON Schema (draft-07 or 2020-12) for structured output (DESIGN §6); compiled by ajv before spawn. */
+export type JsonSchemaObject = Record<string, unknown>;
+
 export interface Usage {
     input_tokens?: number;
     output_tokens?: number;

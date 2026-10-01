@@ -1,20 +1,32 @@
-import type { PromptResponse, SessionNotification } from '@agentclientprotocol/sdk';
+import type { McpServer, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk';
 import { statSync } from 'node:fs';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Collector } from './acp/collector.ts';
 import type { WorkerHooks } from './acp/types.ts';
 import { startWorker } from './acp/worker.ts';
 import type { AgentSpec } from './agent-spec.ts';
 import type { LoadedConfig } from './config.ts';
-import { type FailureContext, type RunFailure, type RunSuccess, ThrongError, toThrongError } from './contract.ts';
+import {
+    type FailureContext,
+    type JsonSchemaObject,
+    type RunFailure,
+    type RunSuccess,
+    ThrongError,
+    toThrongError,
+} from './contract.ts';
 import { harnessById, loadRegistry } from './harnesses/index.ts';
 import { selectEffort, selectModel } from './harnesses/select.ts';
 import { RunLifecycle } from './lifecycle.ts';
 import { log } from './log.ts';
 import { createPermissionBridge, type PermissionBridge, resolvePolicy } from './permissions.ts';
 import type { Progress } from './progress.ts';
-import { buildPrompt } from './prompt.ts';
+import { buildCorrectivePrompt, buildPrompt } from './prompt.ts';
 import type { Semaphore } from './semaphore.ts';
 import { type SessionRecord, touchSessionRecord, writeSessionRecord } from './sessions.ts';
+import type { SubmitState } from './structured/validate.ts';
 
 // The pipeline shared by run_thronglet and resume_thronglet (DESIGN §3.2, §3.3, §4.2, §7):
 // guards → semaphore → Worker → auto policy → model/effort → prompt → payload. The adapter's lifetime is in lifecycle.ts.
@@ -41,6 +53,10 @@ export type RunOutcome = { ok: true; payload: RunSuccess } | { ok: false; payloa
 
 const DEFAULT_CANCEL_GRACE_MS = 5000;
 const QUEUE_WARNING_MS = 1000;
+const MAX_CORRECTIVE_PROMPTS = 2;
+/** Stop reasons after which a missing or rejected structured result gets a corrective prompt (DESIGN §6). */
+const CORRECTABLE_STOPS: readonly string[] = ['end_turn', 'max_tokens', 'max_turn_requests'];
+const SUBMIT_TOOL = fileURLToPath(new URL('./structured/submit-tool.ts', import.meta.url));
 
 /** What to start: a new session from the agent spec, or an earlier one from its session record. */
 export type RunRequest =
@@ -51,7 +67,8 @@ export interface Call {
     /** Tool name, for the log. */
     tool: string;
     prompt: string;
-    schema: unknown;
+    /** Already compiled by the tool's input check (schemaField). */
+    schema: JsonSchemaObject | undefined;
     timeout_s: number | undefined;
     logFields: Record<string, unknown>;
     /** Throws a ThrongError when there is nothing to start (bad agent spec, no session record). */
@@ -72,6 +89,10 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
     let sessionId: string | undefined;
     /** Mode requested by the permission policy; the agent may fall back to another one (claude: auto → acceptEdits). */
     let requestedMode: string | undefined;
+    /** Temp dir of the structured-output run: schema.json and submit-tool's result.json. */
+    let structuredDir: string | undefined;
+    /** Text of the most recent turn that had any; the collector only keeps the current turn. */
+    let lastText = '';
 
     const warn = (text: string) => {
         if (!warnings.includes(text)) warnings.push(text);
@@ -80,7 +101,8 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
     const context = (): FailureContext => {
         if (sessionId === undefined) return {};
         const out: FailureContext = { session_id: sessionId, usage: collector.usage };
-        if (collector.text) out.text = collector.text;
+        const text = collector.text || lastText;
+        if (text) out.text = text;
         return out;
     };
 
@@ -109,7 +131,6 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
                       cwd: request.cwd,
                   }
                 : request.record;
-        if (call.schema !== undefined) warnings.push('schema is not supported yet (v2); ignored');
 
         // Guards, all before spawn.
         const { loaded } = ctx;
@@ -154,6 +175,23 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         lifecycle.arm(call.timeout_s ?? config.limits.timeout_s);
         ctx.progress.started();
 
+        const mcpServers: McpServer[] = [];
+        let outPath: string | undefined;
+        if (call.schema) {
+            structuredDir = await mkdtemp(join(tmpdir(), 'throng-'));
+            const schemaPath = join(structuredDir, 'schema.json');
+            outPath = join(structuredDir, 'result.json');
+            await writeFile(schemaPath, JSON.stringify(call.schema));
+            // No `type`: ACP stdio servers have none, and claude-agent-acp treats only such entries as stdio (DESIGN §2.3).
+            // The absolute node path: ACP wants one, and codex gives MCP servers a whitelisted env without our PATH.
+            mcpServers.push({
+                name: 'throng_result',
+                command: process.execPath,
+                args: [SUBMIT_TOOL, '--schema', schemaPath, '--out', outPath],
+                env: [],
+            });
+        }
+
         const setup = def.permissionSetup(policy);
         const { launch } = resolution;
         const hooks: WorkerHooks = {
@@ -174,10 +212,10 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
                     ? {
                           kind: 'new',
                           cwd: target.cwd,
-                          mcpServers: [],
+                          mcpServers,
                           ...(setup.newSessionMeta ? { meta: setup.newSessionMeta } : {}),
                       }
-                    : { kind: 'resume', sessionId: request.sessionId, cwd: target.cwd, mcpServers: [] },
+                    : { kind: 'resume', sessionId: request.sessionId, cwd: target.cwd, mcpServers },
                 hooks,
                 {
                     handshakeMs: config.limits.handshake_s * 1000,
@@ -216,24 +254,49 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
             if (warning) warnings.push(warning);
         }
 
-        collector.startTurn();
-        const response = await lifecycle.turn(
-            worker.prompt(buildPrompt(call.prompt)),
-            ctx.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS,
-            {
+        const turn = async (text: string): Promise<PromptResponse> => {
+            collector.startTurn();
+            const response = await lifecycle.turn(worker.prompt(text), ctx.cancelGraceMs ?? DEFAULT_CANCEL_GRACE_MS, {
                 onCancel: () => bridge?.cancelAll(),
                 onLateStop: late => collector.endTurn(late),
+            });
+            collector.endTurn(response);
+            if (collector.text) lastText = collector.text;
+            return response;
+        };
+
+        let response = await turn(buildPrompt(call.prompt, call.schema));
+        // Structured output (DESIGN §6): after each turn read submit-tool's out file; re-prompt at most twice.
+        for (let corrective = 0; outPath; corrective++) {
+            const state = await readSubmitState(outPath, warn);
+            if (state?.ok) return finish(response, sessionId, state);
+            if (!CORRECTABLE_STOPS.includes(response.stopReason)) break;
+            if (corrective === MAX_CORRECTIVE_PROMPTS) {
+                throw state
+                    ? new ThrongError('structured_invalid', `last submit_result rejected: ${state.errors}`)
+                    : new ThrongError(
+                          'structured_missing',
+                          `agent did not call submit_result after ${MAX_CORRECTIVE_PROMPTS} corrective prompts`
+                      );
             }
-        );
-        collector.endTurn(response);
+            log.info('structured result not submitted; corrective prompt', {
+                tool: call.tool,
+                session: sessionId,
+                attempt: corrective + 1,
+                last: state ? 'rejected' : 'missing',
+            });
+            response = await turn(buildCorrectivePrompt(state));
+        }
         return finish(response, sessionId);
     };
 
-    const finish = (response: PromptResponse, id: string): RunSuccess => {
+    /** `structured` is the accepted submit_result; it replaces `text` in the payload. */
+    const finish = (response: PromptResponse, id: string, structured?: { result: unknown }): RunSuccess => {
         const text = collector.text;
         switch (response.stopReason) {
             case 'end_turn':
-                if (!text) throw new ThrongError('empty_result', 'agent ended the turn without a message');
+                if (!text && !structured)
+                    throw new ThrongError('empty_result', 'agent ended the turn without a message');
                 break;
             case 'max_tokens':
             case 'max_turn_requests':
@@ -247,7 +310,7 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         }
         const payload: RunSuccess = {
             session_id: id,
-            text,
+            ...(structured ? { structured: structured.result } : { text }),
             stop_reason: response.stopReason,
             usage: collector.usage,
             duration_s: durationS(),
@@ -287,6 +350,12 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
     } catch (err) {
         log.error('run cleanup failed', { error: errorText(err) });
     }
+    // After close: the tree kill has taken the harness's submit-tool child with it.
+    if (structuredDir !== undefined) {
+        await rm(structuredDir, { recursive: true, force: true }).catch((err: unknown) =>
+            log.warn('structured temp dir not removed', { dir: structuredDir, error: errorText(err) })
+        );
+    }
     log.info(`${call.tool} done`, {
         ...call.logFields,
         code: outcome.ok ? 'ok' : outcome.payload.code,
@@ -294,6 +363,26 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         duration_s: outcome.payload.duration_s,
     });
     return outcome;
+}
+
+/** submit-tool's out file; `undefined` when absent or unreadable (the latter with a warning): both mean "not submitted". */
+async function readSubmitState(path: string, warn: (text: string) => void): Promise<SubmitState | undefined> {
+    let raw: string;
+    try {
+        raw = await readFile(path, 'utf8');
+    } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') warn(`structured result unreadable: ${errorText(err)}`);
+        return undefined;
+    }
+    try {
+        const state = JSON.parse(raw) as Partial<SubmitState> | null;
+        if (state?.ok === true && 'result' in state) return state as SubmitState;
+        if (state?.ok === false && typeof state.errors === 'string') return state as SubmitState;
+        warn(`structured result unreadable: unexpected content ${raw.slice(0, 200)}`);
+    } catch (err) {
+        warn(`structured result unreadable: ${errorText(err)}`);
+    }
+    return undefined;
 }
 
 function isDirectory(path: string): boolean {

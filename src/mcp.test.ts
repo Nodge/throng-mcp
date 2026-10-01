@@ -354,6 +354,12 @@ describe('run_thronglet over stdio', () => {
                 arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: 'src' },
             });
             expect(relative.isError).toBe(true);
+            const badSchema = await client.callTool({
+                name: 'run_thronglet',
+                arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo, schema: { type: 'nope' } },
+            });
+            expect(badSchema.isError).toBe(true);
+            expect(JSON.stringify(badSchema.content)).toMatch(/schema is invalid: data\/type must be/);
         } finally {
             await close();
         }

@@ -1,6 +1,15 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -130,6 +139,33 @@ function recordingProgress(): RecordingProgress {
     };
 }
 
+/** The schema the fake agent's submit-* scenarios are written against. */
+const SUBMIT_SCHEMA = {
+    type: 'object',
+    properties: { answer: { type: 'string' } },
+    required: ['answer'],
+    additionalProperties: false,
+};
+
+/** Runs `fn` with TMPDIR pointed at a fresh dir, where the run's structured-output temp dir lands. */
+async function inTmp<T>(fn: () => Promise<T>): Promise<{ result: T; tmp: string }> {
+    const tmp = mkdtempSync(join(root, 'tmp-'));
+    const saved = process.env.TMPDIR;
+    process.env.TMPDIR = tmp;
+    try {
+        return { result: await fn(), tmp };
+    } finally {
+        if (saved === undefined) delete process.env.TMPDIR;
+        else process.env.TMPDIR = saved;
+    }
+}
+
+/** The run's temp dir is removed and no submit-tool (its argv carries the dir) is left running. */
+function expectStructuredGone(tmp: string): void {
+    expect(readdirSync(tmp).filter(name => name.startsWith('throng-'))).toStrictEqual([]);
+    expect(tagAlive(tmp), 'submit-tool still running').toBe(false);
+}
+
 const input = (agent: string, extra: Record<string, unknown> = {}) => ({
     agent,
     prompt: 'do the thing',
@@ -180,12 +216,66 @@ describe('runThronglet', () => {
         expect(nope.session_id?.startsWith('fake-')).toBe(true);
     });
 
-    it('schema is accepted and ignored with a warning', async () => {
-        const { loaded } = fakeClaude('echo');
-        const payload = ok(
-            await runThronglet(input('claude/fake-small', { schema: { type: 'object' } }), makeCtx(loaded))
+    it('schema: a valid submit_result → structured, no text', async () => {
+        const { loaded, tag } = fakeClaude('submit-valid');
+        const { result, tmp } = await inTmp(() =>
+            runThronglet(input('claude/fake-small', { schema: SUBMIT_SCHEMA }), makeCtx(loaded))
         );
-        expect(payload.warnings).toStrictEqual(['schema is not supported yet (v2); ignored']);
+        const payload = ok(result);
+        expect(payload.structured).toStrictEqual({ answer: 'pong' });
+        expect('text' in payload, JSON.stringify(payload)).toBe(false);
+        expect(payload.stop_reason).toBe('end_turn');
+        expect(payload.warnings).toBe(undefined);
+        expect(tagAlive(tag), 'adapter still running').toBe(false);
+        expectStructuredGone(tmp);
+    });
+
+    it('schema: a rejected submit_result fixed within the turn → structured, one turn', async () => {
+        const { loaded } = fakeClaude('submit-invalid-then-valid');
+        const { result, tmp } = await inTmp(() =>
+            runThronglet(input('claude/fake-small', { schema: SUBMIT_SCHEMA }), makeCtx(loaded))
+        );
+        const payload = ok(result);
+        expect(payload.structured).toStrictEqual({ answer: 'pong' });
+        expect('text' in payload).toBe(false);
+        expect(payload.usage).toStrictEqual({ input_tokens: 10, output_tokens: 5 });
+        expectStructuredGone(tmp);
+    });
+
+    it('schema: never submitted → structured_missing after 2 corrective prompts', async () => {
+        const { loaded, tag } = fakeClaude('submit-missing');
+        const { result, tmp } = await inTmp(() =>
+            runThronglet(input('claude/fake-small', { schema: SUBMIT_SCHEMA }), makeCtx(loaded))
+        );
+        const payload = failed(result, 'structured_missing');
+        expect(payload.message).toBe('agent did not call submit_result after 2 corrective prompts');
+        expect(payload.text).toBe('turn 3');
+        expect(payload.session_id?.startsWith('fake-')).toBe(true);
+        expect(payload.usage).toStrictEqual({ input_tokens: 30, output_tokens: 15 });
+        expect(tagAlive(tag), 'adapter still running').toBe(false);
+        expectStructuredGone(tmp);
+    });
+
+    it('schema: always rejected → structured_invalid with the ajv errors', async () => {
+        const { loaded } = fakeClaude('submit-invalid-always');
+        const { result, tmp } = await inTmp(() =>
+            runThronglet(input('claude/fake-small', { schema: SUBMIT_SCHEMA }), makeCtx(loaded))
+        );
+        const payload = failed(result, 'structured_invalid');
+        expect(payload.message).toBe('last submit_result rejected: result/answer must be string');
+        expect(payload.text).toBe('turn 3');
+        expect(payload.session_id?.startsWith('fake-')).toBe(true);
+        expectStructuredGone(tmp);
+    });
+
+    it('schema: the temp dir is removed after a timeout', async () => {
+        const { loaded, tag } = fakeClaude('hang');
+        const { result, tmp } = await inTmp(() =>
+            runThronglet(input('claude/fake-small', { schema: SUBMIT_SCHEMA, timeout_s: 1 }), makeCtx(loaded))
+        );
+        failed(result, 'timeout');
+        expect(tagAlive(tag), 'adapter still running').toBe(false);
+        expectStructuredGone(tmp);
     });
 
     it('unknown harness → harness_unavailable', async () => {
@@ -238,11 +328,13 @@ describe('runThronglet', () => {
     it('client cancel → cancelled, adapter gone', async () => {
         const { loaded, tag } = fakeClaude('hang');
         const controller = new AbortController();
-        setTimeout(() => controller.abort(), 200);
-        const payload = failed(
-            await runThronglet(input('claude/fake-small'), makeCtx(loaded, { signal: controller.signal })),
-            'cancelled'
-        );
+        const ctx = makeCtx(loaded, { signal: controller.signal });
+        const running = runThronglet(input('claude/fake-small'), ctx);
+        // Cancel once the session exists (its record is written right after the handshake), not on a fixed timer.
+        const sessions = join(ctx.cacheDir, 'sessions');
+        await waitFor('session record', () => existsSync(sessions) && readdirSync(sessions).length > 0);
+        controller.abort();
+        const payload = failed(await running, 'cancelled');
         expect(payload.session_id).toBeTruthy();
         expect(payload.usage, 'cancelled turn without usage').toStrictEqual({});
         expect(tagAlive(tag), 'adapter still running').toBe(false);
@@ -535,14 +627,18 @@ describe('resumeThronglet', () => {
         expect(tagAlive(deep.tag)).toBe(false);
     });
 
-    it('schema is accepted and ignored with a warning', async () => {
-        const { loaded } = fakeClaude('echo');
+    it('schema: the submit_result server is injected into session/resume too', async () => {
+        const { loaded, tag } = fakeClaude('submit-valid');
         const ctx = makeCtx(loaded);
         await record(ctx, 'fake-a');
-        const payload = ok(
-            await resumeThronglet({ session_id: 'fake-a', prompt: 'x', schema: { type: 'object' } }, ctx)
+        const { result, tmp } = await inTmp(() =>
+            resumeThronglet({ session_id: 'fake-a', prompt: 'x', schema: SUBMIT_SCHEMA }, ctx)
         );
-        expect(payload.text?.startsWith('resumed: echo: '), payload.text).toBe(true);
-        expect(payload.warnings).toStrictEqual(['schema is not supported yet (v2); ignored']);
+        const payload = ok(result);
+        expect(payload.session_id).toBe('fake-a');
+        expect(payload.structured).toStrictEqual({ answer: 'pong' });
+        expect('text' in payload).toBe(false);
+        expect(tagAlive(tag), 'adapter still running').toBe(false);
+        expectStructuredGone(tmp);
     });
 });

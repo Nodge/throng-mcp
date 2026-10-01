@@ -3,13 +3,23 @@ import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { parseAgentSpec } from '../../agent-spec.ts';
 import { type RunContext, type RunOutcome, runCall } from '../../run.ts';
+import { compileSchema } from '../../structured/validate.ts';
 import type { ToolEnv } from '../tools.ts';
 
-/** Shared with resume_thronglet. */
+/** Shared with resume_thronglet. An invalid schema is an input error (DESIGN §6): ajv must compile it. */
 export const schemaField = z
     .record(z.string(), z.unknown())
+    .superRefine((schema, ctx) => {
+        try {
+            compileSchema(schema);
+        } catch (err) {
+            ctx.addIssue({ code: 'custom', message: err instanceof Error ? err.message : String(err) });
+        }
+    })
     .optional()
-    .describe('JSON Schema for structured output; not supported yet, ignored with a warning');
+    .describe(
+        'JSON Schema (draft-07 or 2020-12) for structured output: the agent submits a matching result, returned as `structured` instead of `text`'
+    );
 export const timeoutField = z
     .number()
     .positive()
@@ -54,7 +64,7 @@ export function register(server: McpServer, env: ToolEnv): void {
         {
             description:
                 'Runs a coding agent (Claude Code, Codex, OpenCode) on a task in cwd and returns its final message as JSON ' +
-                '{session_id, text, stop_reason, usage, duration_s, warnings?}.',
+                '{session_id, text, stop_reason, usage, duration_s, warnings?}; with schema, structured replaces text.',
             inputSchema,
         },
         (args, extra) => env.callRun(extra, ctx => runThronglet(args, ctx))

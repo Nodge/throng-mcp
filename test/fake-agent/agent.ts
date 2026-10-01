@@ -7,6 +7,8 @@ import type {
     SessionUpdate,
     StopReason,
 } from '@agentclientprotocol/sdk';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -29,6 +31,8 @@ interface FakeSession {
     configOptions: SessionConfigOption[];
     cost: number;
     pending: AbortController | undefined;
+    /** session/prompt calls so far, the current one included. */
+    prompts: number;
 }
 
 const sessions = new Map<string, FakeSession>();
@@ -86,6 +90,7 @@ function freshSession(resumed: boolean, cwd: string, mcpServers: McpServer[]): F
         ],
         cost: 0,
         pending: undefined,
+        prompts: 0,
     };
     if (scenario === 'no-effort-option') session.configOptions = session.configOptions.filter(o => o.id !== 'effort');
     return session;
@@ -115,6 +120,32 @@ function optionValue(session: FakeSession, id: string): string {
 function selectValues(option: SessionConfigOption): string[] {
     if (option.type !== 'select') return [];
     return option.options.flatMap(o => ('value' in o ? [o.value] : o.options.map(g => g.value)));
+}
+
+// submit-*: the result the agent submits to throng_result. The valid one can be overridden with FAKE_SUBMIT (JSON);
+// one with string `file` and `content` (the smoke's schema) is also written to the session cwd first.
+const VALID_SUBMIT: unknown = process.env.FAKE_SUBMIT ? JSON.parse(process.env.FAKE_SUBMIT) : { answer: 'pong' };
+const INVALID_SUBMIT = { answer: 1 };
+
+/** Calls `submit_result` of the session's throng_result stdio server, as a harness would. */
+async function submit(session: FakeSession, result: unknown): Promise<{ isError: boolean; text: string }> {
+    const entry = session.mcpServers.find(s => s.name === 'throng_result' && !('type' in s));
+    if (!entry || !('command' in entry)) throw new Error('no throng_result stdio server in mcpServers');
+    const transport = new StdioClientTransport({
+        command: entry.command,
+        args: entry.args,
+        env: Object.fromEntries(entry.env.map(e => [e.name, e.value])),
+        stderr: 'inherit',
+    });
+    const client = new Client({ name: 'fake-agent', version: '0' });
+    await client.connect(transport);
+    try {
+        const response = await client.callTool({ name: 'submit_result', arguments: { result } });
+        const content = response.content as { type: string; text?: string }[];
+        return { isError: response.isError === true, text: content[0]?.text ?? '' };
+    } finally {
+        await client.close();
+    }
 }
 
 /** Resolves after a tick, rejects if the prompt was cancelled meanwhile. */
@@ -170,6 +201,30 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
             });
             return;
         }
+        case 'submit-valid': {
+            const valid = VALID_SUBMIT as { file?: unknown; content?: unknown } | null;
+            if (typeof valid?.file === 'string' && typeof valid.content === 'string') {
+                await writeFile(join(session.cwd, valid.file), valid.content);
+            }
+            await submit(session, VALID_SUBMIT);
+            return;
+        }
+        case 'submit-invalid-then-valid': {
+            const rejected = await submit(session, INVALID_SUBMIT);
+            if (!rejected.isError || !rejected.text.startsWith('rejected: ')) {
+                throw new Error(`invalid result not rejected: ${rejected.text}`);
+            }
+            await submit(session, VALID_SUBMIT);
+            await say('done');
+            return;
+        }
+        case 'submit-missing':
+            await say(`turn ${session.prompts}`);
+            return;
+        case 'submit-invalid-always':
+            await submit(session, INVALID_SUBMIT);
+            await say(`turn ${session.prompts}`);
+            return;
         case 'hang':
             await new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled'))));
             return;
@@ -359,6 +414,7 @@ app.onRequest('session/new', async ctx => {
         session.pending?.abort();
         const controller = new AbortController();
         session.pending = controller;
+        session.prompts++;
         const text = ctx.params.prompt.map(block => (block.type === 'text' ? block.text : '')).join('');
         try {
             await runTurn(ctx.params.sessionId, text, ctx.client, controller.signal);

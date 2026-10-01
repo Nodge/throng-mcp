@@ -46,8 +46,13 @@ function tagAlive(tag: string): boolean {
     }
 }
 
-/** Env like src/mcp.test.ts serverEnv(), with `claude` pointed at the fake agent in `scenario`. */
-function smokeEnv(scenario: string, tag: string, path: string): Record<string, string> {
+/** Env like src/mcp.test.ts serverEnv(), with `claude` pointed at the fake agent in `scenario`; `agentEnv` goes to the agent. */
+function smokeEnv(
+    scenario: string,
+    tag: string,
+    path: string,
+    agentEnv: Record<string, string>
+): Record<string, string> {
     const config = join(dir, `${tag}.yaml`);
     writeFileSync(
         config,
@@ -56,7 +61,7 @@ function smokeEnv(scenario: string, tag: string, path: string): Record<string, s
             '  claude:',
             `    command: ${JSON.stringify(process.execPath)}`,
             `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
-            `    env: { FAKE_SCENARIO: ${scenario} }`,
+            `    env: ${JSON.stringify({ FAKE_SCENARIO: scenario, ...agentEnv })}`,
             '',
         ].join('\n')
     );
@@ -70,7 +75,8 @@ function smokeEnv(scenario: string, tag: string, path: string): Record<string, s
 function smoke(
     args: string[],
     scenario = 'echo',
-    path = bin
+    path = bin,
+    agentEnv: Record<string, string> = {}
 ): Promise<{ code: number | null; stdout: string; stderr: string; tag: string }> {
     const tag = `fake-agent-${randomUUID()}`;
     tags.push(tag);
@@ -78,7 +84,7 @@ function smoke(
         execFile(
             process.execPath,
             ['scripts/smoke/smoke.ts', ...args],
-            { cwd: repo, env: smokeEnv(scenario, tag, path), timeout: 60_000 },
+            { cwd: repo, env: smokeEnv(scenario, tag, path, agentEnv), timeout: 60_000 },
             (err, stdout, stderr) => {
                 const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
                 resolve({ code, stdout, stderr, tag });
@@ -98,6 +104,22 @@ describe('smoke script against the fake agent', () => {
         expect(stdout).toMatch(/PASS: no orphans/);
         expect(stdout).toMatch(/session_id: fake-[0-9a-f-]+/);
         expect(stderr).toMatch(/\[server\] .*throng started/);
+        expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
+
+    it('--schema: run_thronglet with the schema, structured checked', async () => {
+        const { code, stdout, stderr, tag } = await smoke(
+            ['claude/fake-small', '--schema', '--no-resume'],
+            'submit-valid',
+            bin,
+            { FAKE_SUBMIT: JSON.stringify({ file: 'pong.txt', content: 'pong' }) }
+        );
+        expect(code, stdout + stderr).toBe(0);
+        expect(stdout).toMatch(/run_thronglet agent=claude\/fake-small .* schema$/m);
+        expect(stdout).toMatch(/structured: \{"file":"pong\.txt","content":"pong"\}/);
+        expect(stdout).toMatch(/PASS: structured is \{file: pong\.txt, content: pong\}/);
+        expect(stdout).toMatch(/PASS: pong\.txt written/);
+        expect(stdout).toMatch(/PASS: no orphans/);
         expect(tagAlive(tag), 'fake agent left running').toBe(false);
     });
 

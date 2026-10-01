@@ -21,6 +21,7 @@
         "smoke": "node scripts/smoke/smoke.ts",
         "smoke:claude": "node scripts/smoke/smoke.ts claude/haiku",
         "smoke:codex": "node scripts/smoke/smoke.ts codex/gpt-6-luna",
+        "smoke:codex-schema": "node scripts/smoke/smoke.ts codex/gpt-6-luna --schema",
         "smoke:opencode": "node scripts/smoke/smoke.ts opencode/openrouter/z-ai/glm-5.3-flash"
     },
     "dependencies": {
