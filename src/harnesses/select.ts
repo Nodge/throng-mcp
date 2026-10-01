@@ -1,7 +1,6 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import type { Worker } from '../acp/types.ts';
-import type { Effort } from '../contract.ts';
-import { ThrongError } from '../errors.ts';
+import { type Effort, ThrongError } from '../contract.ts';
 import type { HarnessDefinition } from './types.ts';
 
 // Model/effort selection after the handshake (DESIGN §4.1). Options are found by `category`, never by id.

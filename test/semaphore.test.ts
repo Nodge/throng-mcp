@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { ThrongError } from '../src/errors.ts';
+import { ThrongError } from '../src/contract.ts';
 import { Semaphore } from '../src/semaphore.ts';
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));

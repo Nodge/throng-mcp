@@ -1,7 +1,7 @@
 import type { PromptResponse, SessionNotification } from '@agentclientprotocol/sdk';
-import type { Usage } from '../errors.ts';
+import type { Usage } from '../contract.ts';
 
-// Folds the session/update stream and prompt responses into the run result (DESIGN §4.3); the transcript is written by run.ts.
+// Folds the session/update stream and prompt responses into the run result (DESIGN §4.3).
 
 export class Collector {
   #text = '';

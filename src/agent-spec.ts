@@ -1,6 +1,4 @@
-import { EFFORT_LEVELS, HARNESS_IDS } from './contract.ts';
-import type { Effort, HarnessId } from './contract.ts';
-import { ThrongError } from './errors.ts';
+import { EFFORT_LEVELS, type Effort, HARNESS_IDS, type HarnessId, ThrongError } from './contract.ts';
 
 export interface AgentSpec {
   harness: HarnessId;

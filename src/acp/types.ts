@@ -31,7 +31,7 @@ export type SessionStart =
   | { kind: 'resume'; sessionId: string; cwd: string; mcpServers: McpServer[] };
 
 export interface WorkerHooks {
-  /** Every `session/update` of this session, in order; feeds the collector, progress and the transcript. */
+  /** Every `session/update` of this session, in order; feeds the collector and progress. */
   onUpdate?: (notification: SessionNotification) => void;
   /** Answer to `session/request_permission`; the Worker never decides itself. */
   onPermission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>;

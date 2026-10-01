@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { createProgress, type ProgressNotification } from '../src/progress.ts';
+import { createProgress, type ProgressNotification } from '../src/mcp/progress.ts';
 
 function fakeExtra(token: string | number | undefined, fail = false) {
   const sent: ProgressNotification['params'][] = [];

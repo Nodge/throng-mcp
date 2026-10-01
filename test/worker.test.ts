@@ -5,7 +5,7 @@ import { after, describe, it } from 'node:test';
 import { Collector } from '../src/acp/collector.ts';
 import type { SessionStart, Worker, WorkerHooks, WorkerLimits } from '../src/acp/types.ts';
 import { startWorker } from '../src/acp/worker.ts';
-import { ThrongError } from '../src/errors.ts';
+import { ThrongError } from '../src/contract.ts';
 import { type FakeScenario, fakeAgentSpawn } from './fake-agent/index.ts';
 
 const cwd = process.cwd();

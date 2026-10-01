@@ -66,26 +66,24 @@ export async function touchSessionRecord(dir: string, sessionId: string, at: Dat
   await writeAtomic(recordPath(dir, sessionId), `${JSON.stringify({ ...record, last_used_at: at.toISOString() }, null, 2)}\n`);
 }
 
-/** Deletes session records and run transcripts older than `maxAgeDays` by mtime. Never throws. */
+/** Deletes session records older than `maxAgeDays` by mtime. Never throws. */
 export async function rotate(dir: string, maxAgeDays = 14, now: number = Date.now()): Promise<void> {
   const cutoff = now - maxAgeDays * 24 * 60 * 60 * 1000;
-  for (const sub of ['sessions', 'runs']) {
-    const base = join(dir, sub);
-    let names: string[];
+  const base = join(dir, 'sessions');
+  let names: string[];
+  try {
+    names = await readdir(base);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') log.warn('rotate: cannot list', { dir: base, error: String(err) });
+    return;
+  }
+  for (const name of names) {
+    const path = join(base, name);
     try {
-      names = await readdir(base);
+      const info = await stat(path);
+      if (info.isFile() && info.mtimeMs < cutoff) await unlink(path);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') log.warn('rotate: cannot list', { dir: base, error: String(err) });
-      continue;
-    }
-    for (const name of names) {
-      const path = join(base, name);
-      try {
-        const info = await stat(path);
-        if (info.isFile() && info.mtimeMs < cutoff) await unlink(path);
-      } catch (err) {
-        log.warn('rotate: cannot remove', { path, error: err instanceof Error ? err.message : String(err) });
-      }
+      log.warn('rotate: cannot remove', { path, error: err instanceof Error ? err.message : String(err) });
     }
   }
 }

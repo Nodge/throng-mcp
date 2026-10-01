@@ -1,4 +1,4 @@
-import { ThrongError } from './errors.ts';
+import { ThrongError } from './contract.ts';
 
 // Per-process limit on concurrent runs (DESIGN §7).
 

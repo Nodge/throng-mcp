@@ -1,14 +1,13 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Worker } from '../acp/types.ts';
-import { startWorker } from '../acp/worker.ts';
-import type { Config, LoadedConfig } from '../config.ts';
-import { HARNESS_IDS } from '../contract.ts';
-import type { HarnessInfo, ListHarnessesOutput } from '../contract.ts';
-import { HARNESSES, loadRegistry } from './index.ts';
-import { optionByCategory } from './select.ts';
-import type { HarnessDefinition, RegistrySnapshot } from './types.ts';
+import type { Worker } from './acp/types.ts';
+import { startWorker } from './acp/worker.ts';
+import type { Config, LoadedConfig } from './config.ts';
+import { HARNESS_IDS, type HarnessInfo, type ListHarnessesOutput } from './contract.ts';
+import { HARNESSES, loadRegistry } from './harnesses/index.ts';
+import { optionByCategory } from './harnesses/select.ts';
+import type { HarnessDefinition, RegistrySnapshot } from './harnesses/types.ts';
 
 // list_harnesses (DESIGN §3.4): every available harness is started over ACP, no prompt, and closed again.
 

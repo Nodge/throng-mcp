@@ -13,7 +13,7 @@ after(() => rmSync(root, { recursive: true, force: true }));
 
 const registry = loadRegistry();
 const raw = JSON.parse(readFileSync(new URL('../data/registry.json', import.meta.url), 'utf8')) as RegistrySnapshot;
-const npxPackage = (id: string) => raw.agents.find((a) => a.id === id)?.distribution?.npx?.package;
+const npxPackage = (id: string) => raw.agents.find((a) => a.id === id)?.distribution?.npx?.package?.replace(/@[^@/]*$/, '');
 
 let dirs = 0;
 /** A fresh PATH dir holding executable stubs for `bins`. */
@@ -104,11 +104,11 @@ describe('resolve', () => {
     const claude = reasonOf(HARNESSES.claude.resolve(DEFAULT_CONFIG, registry, env));
     assert.ok(claude.includes('claude-agent-acp not found on PATH'), claude);
     assert.ok(claude.includes(`npm i -g ${npxPackage('claude-acp')}`), claude);
-    assert.ok(claude.includes('npm i -g @agentclientprotocol/claude-agent-acp@0.81.2'), claude);
+    assert.ok(claude.includes('npm i -g @agentclientprotocol/claude-agent-acp'), claude);
 
     const codex = reasonOf(HARNESSES.codex.resolve(DEFAULT_CONFIG, registry, env));
     assert.ok(codex.includes('codex-acp not found on PATH'), codex);
-    assert.ok(codex.includes('npm i -g @agentclientprotocol/codex-acp@1.13.1'), codex);
+    assert.ok(codex.includes('npm i -g @agentclientprotocol/codex-acp'), codex);
 
     const opencode = reasonOf(HARNESSES.opencode.resolve(DEFAULT_CONFIG, registry, env));
     assert.ok(opencode.includes('opencode not found on PATH'), opencode);
@@ -161,7 +161,7 @@ describe('resolve', () => {
     const path = withHarnesses({ claude: { command: join(root, 'no-such-adapter') } });
     const pathReason = reasonOf(HARNESSES.claude.resolve(path, registry, { PATH: pathDir(ALL_BINS) }));
     assert.ok(pathReason.startsWith(`${join(root, 'no-such-adapter')} (harnesses.claude.command) not found or not executable`), pathReason);
-    assert.ok(pathReason.includes('npm i -g @agentclientprotocol/claude-agent-acp@0.81.2'), pathReason);
+    assert.ok(pathReason.includes('npm i -g @agentclientprotocol/claude-agent-acp'), pathReason);
   });
 });
 

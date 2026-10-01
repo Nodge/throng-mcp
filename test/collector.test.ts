@@ -69,7 +69,7 @@ describe('collector', () => {
     assert.deepEqual(c.warnings, ['warning: fell back — to default model', 'info: no description']);
   });
 
-  it('thought and plan are transcript only', () => {
+  it('thought and plan are ignored', () => {
     const c = new Collector();
     c.startTurn();
     c.handle(note({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'hmm' } }));

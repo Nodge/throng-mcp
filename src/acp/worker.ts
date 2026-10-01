@@ -2,7 +2,7 @@ import * as acp from '@agentclientprotocol/sdk';
 import type { ClientConnection, InitializeResponse, PromptResponse, SessionConfigOption } from '@agentclientprotocol/sdk';
 import type { ChildProcess } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
-import { type ErrorCode, ThrongError } from '../errors.ts';
+import { type ErrorCode, ThrongError } from '../contract.ts';
 import { type AdapterProcess, killTree, snapshotDescendants, spawnAdapter } from './process.ts';
 import type { SessionStart, StartWorker, Worker, WorkerHooks, WorkerLimits, WorkerSession, WorkerSpawn } from './types.ts';
 

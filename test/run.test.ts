@@ -8,9 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { after, describe, it } from 'node:test';
 import { loadConfig, type LoadedConfig } from '../src/config.ts';
 import type { RunFailure, RunSuccess } from '../src/contract.ts';
-import { createProgress, noProgress, type Progress, type ProgressNotification } from '../src/progress.ts';
+import { createProgress, type ProgressNotification } from '../src/mcp/progress.ts';
+import { noProgress, type Progress } from '../src/progress.ts';
 import { EXECUTOR_PREFIX } from '../src/prompt.ts';
-import { type RunContext, type RunOutcome, resumeThronglet, runThronglet } from '../src/run.ts';
+import { resumeThronglet } from '../src/mcp/tools/resume-thronglet.ts';
+import { runThronglet } from '../src/mcp/tools/run-thronglet.ts';
+import type { RunContext, RunOutcome } from '../src/run.ts';
 import { Semaphore } from '../src/semaphore.ts';
 import { type SessionRecord, writeSessionRecord } from '../src/sessions.ts';
 import type { FakeScenario } from './fake-agent/index.ts';
@@ -124,17 +127,10 @@ function recordingProgress(): RecordingProgress {
   };
 }
 
-function readJsonl(path: string): Array<Record<string, unknown>> {
-  return readFileSync(path, 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
-}
-
 const input = (agent: string, extra: Record<string, unknown> = {}) => ({ agent, prompt: 'do the thing', cwd: work, ...extra });
 
 describe('runThronglet', () => {
-  it('echo: success payload, session record, transcript', async () => {
+  it('echo: success payload, session record', async () => {
     const { loaded, tag } = fakeClaude('echo');
     const ctx = makeCtx(loaded);
     const payload = ok(await runThronglet(input('claude/fake-small'), ctx));
@@ -156,23 +152,6 @@ describe('runThronglet', () => {
     assert.equal(record.cwd, work);
     assert.equal(record.effort, undefined);
     assert.ok(Date.parse(record.created_at) <= Date.parse(record.last_used_at));
-
-    const runs = readdirSync(join(ctx.cacheDir, 'runs'));
-    assert.equal(runs.length, 1);
-    assert.match(runs[0]!, new RegExp(`-claude-${payload.session_id}\\.jsonl$`));
-    const lines = readJsonl(join(ctx.cacheDir, 'runs', runs[0]!));
-    const inputLine = lines.find((l) => l.kind === 'input')!;
-    assert.deepEqual(
-      { agent: inputLine.agent, cwd: inputLine.cwd, prompt_chars: inputLine.prompt_chars, prompt: inputLine.prompt },
-      { agent: 'claude/fake-small', cwd: work, prompt_chars: 12, prompt: undefined },
-    );
-    assert.ok(!JSON.stringify(inputLine).includes('do the thing'));
-    assert.ok(lines.some((l) => l.kind === 'update'));
-    const outcome = lines.at(-1)!;
-    assert.equal(outcome.kind, 'outcome');
-    assert.equal(outcome.ok, true);
-    assert.equal(outcome.text, undefined);
-    assert.equal(outcome.session_id, payload.session_id);
   });
 
   it('model and effort from the agent spec', async () => {
@@ -382,15 +361,6 @@ describe('resumeThronglet', () => {
     assert.equal(after.created_at, before.created_at);
     assert.ok(Date.parse(after.last_used_at) > Date.parse(before.last_used_at), `${before.last_used_at} → ${after.last_used_at}`);
     assert.deepEqual({ ...after, last_used_at: undefined }, { ...before, last_used_at: undefined });
-
-    const runs = readdirSync(join(ctx.cacheDir, 'runs'));
-    assert.equal(runs.length, 2);
-    for (const name of runs) assert.match(name, new RegExp(`-claude-${first.session_id}\\.jsonl$`));
-    const inputs = runs.map((name) => readJsonl(join(ctx.cacheDir, 'runs', name)).find((l) => l.kind === 'input')!);
-    const resumed = inputs.find((l) => l.resume === true)!;
-    assert.ok(resumed, JSON.stringify(inputs));
-    const { ts: _ts, ...line } = resumed;
-    assert.deepEqual(line, { kind: 'input', resume: true, session_id: first.session_id, harness: 'claude', prompt_chars: 15 });
   });
 
   it('unknown or unsafe id → session_not_found before spawn', async () => {

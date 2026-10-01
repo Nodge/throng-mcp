@@ -18,19 +18,13 @@ cd throng-mcp
 pnpm install
 ```
 
-Adapters (the versions throng was verified against):
+Adapters:
 
 ```bash
-npm i -g @agentclientprotocol/claude-agent-acp@0.81.2 @agentclientprotocol/codex-acp@1.13.1
+npm i -g @agentclientprotocol/claude-agent-acp @agentclientprotocol/codex-acp
 ```
 
-This also pulls each adapter's bundled copy of its harness (~600 MB). If `claude` and `codex` are already on PATH, skip the bundled copies:
-
-```bash
-npm i -g --omit=optional @agentclientprotocol/claude-agent-acp@0.81.2 @agentclientprotocol/codex-acp@1.13.1   # ~58 MB
-```
-
-throng passes the absolute paths of the `claude` / `codex` it finds on PATH to the adapters (`CLAUDE_CODE_EXECUTABLE` / `CODEX_PATH`), so they run your installed, logged-in CLI. Without the CLI on PATH, install without `--omit=optional`: the adapter then falls back to its bundled binary.
+throng passes the absolute paths of the `claude` / `codex` it finds on PATH to the adapters (`CLAUDE_CODE_EXECUTABLE` / `CODEX_PATH`), so they run your installed, logged-in CLI.
 
 OpenCode is a single binary with ACP built in (`opencode acp`): install it per https://opencode.ai/docs.
 
@@ -61,7 +55,7 @@ opencode/openrouter/anthropic/claude-sonnet-5
 - The first path segment is the harness: `claude`, `codex` or `opencode`. The rest is the model as the harness names it (for OpenCode that is `<provider>/<model>`).
 - The suffix is taken as effort only when it is `low | medium | high | xhigh | max`, so a model name with its own `:tag` stays intact.
 - The model must be one of the harness's own values, as listed by `list_harnesses`. Today: claude `default | opus[1m] | claude-fable-5-1 | sonnet | haiku`; codex `gpt-6-astra | gpt-6-sol | gpt-6-luna | gpt-5.6-sol | …`; opencode every `<provider>/<model>` it knows (e.g. `openrouter/z-ai/glm-5.3-flash`).
-- Effort is mapped to the harness's effort option: claude takes the level as is; codex too, with `max` falling back to `xhigh` if absent; OpenCode has no effort option, so a suffix there only produces a warning. An effort the harness doesn't offer is a warning, not an error.
+- Effort is mapped to the harness's effort option: claude takes the level as is; codex too, with `max` falling back to `xhigh` if absent. OpenCode's ACP adapter exposes no effort option (1.18.31), so a suffix there only produces a warning. An effort the harness doesn't offer is a warning, not an error.
 
 ### `run_thronglet`
 
@@ -137,17 +131,6 @@ A follow-up prompt into an earlier nested session, e.g. "now fix what the review
 
 Harness, model, effort and `cwd` come from the session record written by `run_thronglet` (see [Files on disk](#files-on-disk)); the caller doesn't repeat them. Each call starts a fresh adapter process, which picks the session up with ACP `session/resume`: the nested session's context is the harness's own, throng replays no history. Permission mode, model and effort are applied again, as for a new run. The result is the same payload as `run_thronglet`, with the same `session_id`; the same failure codes apply, plus `session_not_found` when there is no record for the id (records live 14 days) or the harness refuses to resume it.
 
-### What the nested agent is told
-
-Every prompt is prefixed with executor rules (`src/prompt.ts`): do the task yourself in cwd; don't run the project's own task cycles/workflows from CLAUDE.md / AGENTS.md; don't commit or push unless told; don't kill processes you didn't start; say plainly when something couldn't be done, no placeholders; the final message is the result. The nested session sees nothing of the calling conversation, so the prompt must carry all the context: files, constraints, what "done" means.
-
-### In Claude Code
-
-- A call running longer than 120 s in an interactive main session is moved to a background task automatically; the result arrives as a notification, stop it with TaskStop. Inside subagents the call stays synchronous.
-- Esc (or TaskStop) cancels the call: throng cancels the nested session and kills the adapter's process tree.
-- throng sends progress notifications (tool calls, agent text, a heartbeat every 30 s), which keep Claude Code's 30-min idle timeout for MCP calls from firing on long turns.
-- Several `run_thronglet` / `resume_thronglet` calls can run in parallel, up to `limits.max_concurrency`; the rest wait in a queue (reported as progress).
-
 ## Configuration
 
 Optional: `~/.config/throng/config.yaml`.
@@ -192,9 +175,9 @@ Auth: the nested harness uses whatever login its CLI has. If `claude auth status
 ## Files on disk
 
 - `~/.cache/throng/sessions/<session_id>.json`: one record per session (`harness, model, effort, cwd, created_at, last_used_at`), read by `resume_thronglet`, which updates `last_used_at`.
-- `~/.cache/throng/runs/<ts>-<harness>-<session_id>.jsonl`: transcript of each call: input (prompt length only), every ACP event, permission decisions, adapter stderr tail, outcome. Not returned to the caller; for debugging by hand.
-- Both are rotated at server start: files older than 14 days are deleted.
-- Server logs are short lines on stderr (start/stop, each run's outcome and transcript path, errors); the MCP client decides where they end up.
+- Records are rotated at server start: files older than 14 days are deleted.
+- Server logs are short lines on stderr (start/stop, permission decisions, each run's outcome, errors); the MCP client decides where they end up.
+- throng keeps no transcripts: the harness logs every session itself, find it by `session_id`.
 
 ## Smoke (maintainer)
 
@@ -215,7 +198,7 @@ The script starts the server, prints the `list_harnesses` table (versions, model
 - `PASS: resume answered pong.txt` / `FAIL: resume …`: a `resume_thronglet` into the same session asks which file it created; its payload is printed and the answer must mention `pong.txt`. Skipped when the run failed, or with `--no-resume` (e.g. with a custom `--prompt`).
 - `PASS: no orphans` / `FAIL: orphaned adapter processes: <pids>`: no new `claude-agent-acp`, `codex-acp` or `opencode acp` process is alive 3 s after the client closed. `FAIL: cannot check orphans (…)` when `pgrep` is missing or fails.
 
-Exit code: 0 all passed; 1 a FAIL or a tool error; 2 bad usage, harness unavailable or unknown model (the valid models are printed). Server stderr is prefixed `[server]`, progress `[progress]`. The temp dir is removed on success and kept (path printed) on failure; transcripts are under the printed `transcripts:` path.
+Exit code: 0 all passed; 1 a FAIL or a tool error; 2 bad usage, harness unavailable or unknown model (the valid models are printed). Server stderr is prefixed `[server]`, progress `[progress]`. The temp dir is removed on success and kept (path printed) on failure.
 
 Manual items that need an interactive Claude Code session:
 
@@ -231,9 +214,9 @@ Record the adapter versions `list_harnesses` reported in the backlog task notes.
 - A warning `permission mode "auto" not applied: the agent switched to "acceptEdits"`: Claude Code has no auto mode for that model (haiku, for one) and falls back to accept-edits; file edits are still auto-approved, anything else the harness asks about is rejected by throng (`auto` never widens into allow-all). Pick another model if you need the real auto mode.
 - `model_rejected`: the model isn't one of the harness's values. Call `list_harnesses` for the current list; they are the harness's own option values and change with harness versions.
 - `handshake_timeout` / `spawn_failed` / `handshake_failed`: the message includes the adapter's stderr. Usual cause is auth: check `claude auth status` (or set `CLAUDE_CODE_OAUTH_TOKEN` in config), `codex login`, `opencode auth login`. Slow first start: raise `limits.handshake_s`.
-- `empty_result`: the agent ended its turn without saying anything; the transcript shows what it did.
+- `empty_result`: the agent ended its turn without saying anything; the harness's own session log shows what it did.
 - `timeout`: raise `timeout_s` for the call or `limits.timeout_s`. The payload keeps `session_id` and any partial `text`.
-- Anything else: the per-call transcript under `~/.cache/throng/runs/`.
+- Anything else: the server log, then the harness's session log by `session_id`.
 
 ## Development
 

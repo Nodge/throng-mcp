@@ -6,7 +6,7 @@ import type { HarnessId } from './contract.ts';
 
 type Outcome = RequestPermissionResponse['outcome'];
 
-/** One answered request, for the transcript. `choice` is the selected optionId or `cancelled`. */
+/** One answered request, for the server log. `choice` is the selected optionId or `cancelled`. */
 export interface PermissionDecision {
   title: string;
   kind: string;

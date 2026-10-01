@@ -43,20 +43,15 @@ describe('sessions', () => {
     assert.equal(await readSessionRecord(dir, '../evil'), undefined);
   });
 
-  it('rotate deletes old files in sessions/ and runs/, keeps fresh ones; missing dirs are fine', async () => {
+  it('rotate deletes old session records, keeps fresh ones; a missing dir is fine', async () => {
     const dir = join(root, 'rot');
     await rotate(dir);
     mkdirSync(join(dir, 'sessions'), { recursive: true });
-    mkdirSync(join(dir, 'runs'), { recursive: true });
     const old = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000);
-    for (const [sub, name] of [['sessions', 'old.json'], ['runs', 'old.jsonl']] as const) {
-      writeFileSync(join(dir, sub, name), '{}');
-      utimesSync(join(dir, sub, name), old, old);
-    }
+    writeFileSync(join(dir, 'sessions', 'old.json'), '{}');
+    utimesSync(join(dir, 'sessions', 'old.json'), old, old);
     writeFileSync(join(dir, 'sessions', 'fresh.json'), '{}');
-    writeFileSync(join(dir, 'runs', 'fresh.jsonl'), '{}');
     await rotate(dir);
     assert.deepEqual(readdirSync(join(dir, 'sessions')), ['fresh.json']);
-    assert.deepEqual(readdirSync(join(dir, 'runs')), ['fresh.jsonl']);
   });
 });

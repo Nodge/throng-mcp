@@ -9,7 +9,6 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { parseAgentSpec } from '../../src/agent-spec.ts';
 import type { ListHarnessesOutput, RunFailure, RunSuccess } from '../../src/contract.ts';
-import { cacheDir } from '../../src/sessions.ts';
 
 // Manual smoke against a REAL harness (DESIGN §9): starts `node src/mcp.ts` with the user's own env, config and cache,
 // runs list_harnesses and one run_thronglet, checks the file the agent wrote, asks a resume_thronglet follow-up about it,
@@ -237,6 +236,5 @@ if (cwd && createdCwd) {
   if (exitCode === 0) rmSync(cwd, { recursive: true, force: true });
   else console.log(`kept cwd for inspection: ${cwd}`);
 }
-console.log(`transcripts: ${join(cacheDir(), 'runs')}`);
 console.log(exitCode === 0 ? 'SMOKE PASSED' : `SMOKE FAILED (exit ${exitCode})`);
 process.exitCode = exitCode;

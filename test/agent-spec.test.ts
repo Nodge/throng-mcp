@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseAgentSpec } from '../src/agent-spec.ts';
-import { EFFORT_LEVELS, HARNESS_IDS } from '../src/contract.ts';
-import { ThrongError } from '../src/errors.ts';
-import type { ErrorCode } from '../src/errors.ts';
+import { EFFORT_LEVELS, type ErrorCode, HARNESS_IDS, ThrongError } from '../src/contract.ts';
 
 function assertThrongError(fn: () => unknown, code: ErrorCode, includes: string[]): void {
   assert.throws(fn, (err: unknown) => {

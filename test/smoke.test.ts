@@ -94,7 +94,6 @@ describe('smoke script against the fake agent', () => {
     assert.match(stdout, /adapter processes before: (none|[\d ]+)$/m);
     assert.match(stdout, /PASS: no orphans/);
     assert.match(stdout, /session_id: fake-[0-9a-f-]+/);
-    assert.match(stdout, /transcripts: .*cache\/runs/);
     assert.match(stderr, /\[server\] .*throng started/);
     assert.equal(tagAlive(tag), false, 'fake agent left running');
   });
@@ -150,7 +149,7 @@ describe('smoke script against the fake agent', () => {
   it('exits 2 with the install hint when the adapter is not on PATH', async () => {
     const { code, stdout, stderr } = await smoke(['codex/x']);
     assert.equal(code, 2, stdout + stderr);
-    assert.match(stdout, /codex-acp not found on PATH; install: npm i -g @agentclientprotocol\/codex-acp@1\.13\.1/);
+    assert.match(stdout, /codex-acp not found on PATH; install: npm i -g @agentclientprotocol\/codex-acp$/m);
     assert.match(stdout, /harness codex is not available/);
   });
 

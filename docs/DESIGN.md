@@ -68,7 +68,7 @@ Consequence: wrapper subagents that shell out to a nested harness CLI aren't nee
 
 One string names harness, model and effort: `<harness>/<model>[:<effort>]`.
 
-- `claude/opus-5-5`, `claude/opus-5-5:max`, `codex/gpt-6-sol:xhigh`, `opencode/openrouter/moonshotai/kimi-k3:high`.
+- `claude/opus[1m]`, `claude/opus[1m]:max`, `codex/gpt-6-sol:xhigh`, `opencode/openrouter/moonshotai/kimi-k3:high`.
 - First path segment is the harness; the rest up to the last `:` is the model as the harness understands it (for opencode that's already `provider/model`).
 - The `:<effort>` suffix is recognized only when it's one of `low | medium | high | xhigh | max`, so model names with their own `:tag` survive.
 
@@ -167,32 +167,41 @@ Run by the user, not by the tasks: nothing outside the project directory is touc
 ```
 data/registry.json          — snapshot of the ACP registry (§4.1)
 src/
-  mcp.ts                    — entry: StdioServerTransport, tool registration, shutdown hooks
+  mcp.ts                    — entry: config, semaphore, StdioServerTransport, shutdown hooks
+  mcp/
+    tools.ts                — shared registration: progress, in-flight tracking, one JSON text block per result
+    tools/                  — one file per tool: input schema, description, mapping to run.ts / list.ts
+    progress.ts             — notifications/progress
+  contract.ts               — tool inputs and results, ErrorCode, ThrongError (§3)
   config.ts                 — defaults + ~/.config/throng/config.yaml + env (THRONG_MCP_CONFIG, THRONG_MCP_DEPTH)
   agent-spec.ts             — parse '<harness>/<model>[:<effort>]'
   harnesses/
     types.ts                — HarnessDefinition
     claude.ts codex.ts opencode.ts
-    index.ts                — registry snapshot + PATH resolution + discovery
+    index.ts discovery.ts   — registry snapshot + PATH resolution + discovery
+    select.ts               — model/effort selection by option category
   acp/
     process.ts              — spawn in own process group, kill tree, descendant snapshot
     worker.ts               — Worker: connect/initialize/newSession|resumeSession/setOptions/prompt/cancel/close
-    collector.ts            — fold session/update → text, usage, warnings, transcript
+    collector.ts            — fold session/update → text, usage, warnings
   sessions.ts               — session records on disk (§8)
   permissions.ts            — policy → answer to request_permission; bridge to MCP elicitation
   structured/
     submit-tool.ts          — stdio MCP server spawned by the harness: submit_result → ajv → result file
     validate.ts             — ajv
   run.ts                    — orchestration of one run/resume call
-  prompt.ts                 — "executor constraints" prefix, submit_result instructions
-  progress.ts semaphore.ts errors.ts log.ts
+  lifecycle.ts              — slot, cancel/timeout race, worker start/cancel/close for one call
+  list.ts                   — list_harnesses: probe every harness
+  prompt.ts                 — prompt prefix, submit_result instructions
+  progress.ts               — Progress interface (the MCP implementation is mcp/progress.ts)
+  semaphore.ts log.ts
 test/
   fake-agent/               — minimal ACP agent on @agentclientprotocol/sdk (agent side), scenarios via env
   *.test.ts                 — node:test
 scripts/smoke/              — runs against real harnesses (manual)
 ```
 
-Layers: `run.ts` knows about MCP (progress, elicitation, signal) and about Worker; Worker knows about ACP and the process, not about MCP; HarnessDefinition is plain data plus 3 hooks. Swapping the transport (ACP v2) = a new Worker with the same interface.
+Layers: `mcp/` knows about MCP and nothing else calls it; `run.ts` gets progress and the cancel signal through plain interfaces and knows about Worker; Worker knows about ACP and the process, not about MCP; HarnessDefinition is plain data plus 3 hooks. Swapping the transport (ACP v2) = a new Worker with the same interface.
 
 ### 4.1 Harnesses and discovery
 
@@ -202,7 +211,7 @@ throng-mcp ships no adapters and no harnesses (decision-3). The user installs bo
 |---|---|---|---|
 | registry id | `claude-acp` | `codex-acp` | `opencode` |
 | adapter on PATH | `claude-agent-acp` | `codex-acp` | `opencode acp` |
-| install hint | `npm i -g @agentclientprotocol/claude-agent-acp@0.81.2` | `npm i -g @agentclientprotocol/codex-acp@1.13.1` | opencode install docs |
+| install hint | `npm i -g @agentclientprotocol/claude-agent-acp` | `npm i -g @agentclientprotocol/codex-acp` | opencode install docs |
 | harness on PATH | `claude` → `CLAUDE_CODE_EXECUTABLE` | `codex` → `CODEX_PATH` | same binary |
 | model | option category `model` | option category `model` | option category `model` |
 | effort | option `thought_level`; exact | `thought_level`; `max → xhigh` | `thought_level` if present; otherwise warning |
@@ -211,7 +220,7 @@ throng-mcp ships no adapters and no harnesses (decision-3). The user installs bo
 
 Availability is decided by the adapter command only. Adapter not on PATH → `unavailable` with `reason` = `<command> not found on PATH; install: <hint>`, and `run_thronglet` fails with `harness_unavailable` and the same text before spawn. The harness binary is optional: when `claude`/`codex` is on PATH, its absolute path goes into `CLAUDE_CODE_EXECUTABLE`/`CODEX_PATH` (unless config sets them), so the adapter runs the user's installed and logged-in harness; otherwise the adapter falls back to its bundled platform package, and if that is missing too, the probe fails at handshake and the adapter's error lands in `reason`. Everything past "the command exists" is checked by the probe (§3.4), not by guessing.
 
-Install hints for npm adapters come from `distribution.npx.package` of the registry snapshot (it carries the verified version); OpenCode ships as a binary, so its hint is a fixed pointer to its install docs. `npm i -g --omit=optional` skips the platform packages (~500 MB for both adapters, decision-1); it's safe only with the harness on PATH, so it goes into the README as an option, not into the hint.
+Install hints for npm adapters come from `distribution.npx.package` of the registry snapshot with its version dropped: the user installs the latest adapter, `list_harnesses` shows which one. OpenCode ships as a binary, so its hint is a fixed pointer to its install docs. `npm i -g --omit=optional` skips the platform packages (~500 MB for both adapters, decision-1); it's safe only with the harness on PATH and isn't documented.
 
 `data/registry.json` is a verbatim snapshot of the ACP registry. In v1 it supplies `args`/`env` of the distribution for the three ids, the install hints and the description shown by `list_harnesses`; commands come from the table above. Later iterations can fetch the live registry and expose "generic" harnesses from it without changing the data shape.
 
@@ -234,11 +243,11 @@ Model is set strictly: the value must be in `options` of the matching config opt
 One call = one adapter process = one ACP session. No pool (YAGNI; adapter start is seconds).
 
 Sequence:
-1. `spawn` (detached, own group, `stdio: [pipe, pipe, pipe]`, stderr → 64 KB ring buffer for error messages and the transcript). `THRONG_MCP_DEPTH = depth + 1` in the child env.
+1. `spawn` (detached, own group, `stdio: [pipe, pipe, pipe]`, stderr → 64 KB ring buffer for error messages). `THRONG_MCP_DEPTH = depth + 1` in the child env.
 2. `connectWith(ndJsonStream)`, `initialize` (`clientCapabilities: { fs: {readTextFile:false, writeTextFile:false}, terminal:false }`).
 3. `session/new { cwd, mcpServers }` (+ `_meta` from the harness), or `session/resume { sessionId, cwd, mcpServers }` for `resume_thronglet` (requires `sessionCapabilities.resume`; unknown id → `session_not_found`). Steps 1–3 run under the handshake timeout (60 s) → `handshake_timeout`.
 4. Mode (`setSessionMode`), model, effort via `setSessionConfigOption`.
-5. `prompt` → `nextUpdate()` loop until `stop`. Every event → collector + progress + transcript.
+5. `prompt` → `nextUpdate()` loop until `stop`. Every event → collector + progress.
 6. Structured-output re-prompts (§6): step 5 again.
 7. `close()`: close stdin, wait 5 s for exit, then `SIGTERM` to the group, 5 s more → `SIGKILL`; finish off the descendant snapshot (`pgrep -P`, recursive, taken before close).
 
@@ -252,11 +261,11 @@ Client methods `fs/*`, `terminal/*`: not advertised; if an agent calls them anyw
 
 From the `session/update` stream:
 - `agent_message_chunk` (text) of the current turn → `text`. Each new `prompt` resets the buffer; the last turn is returned.
-- `agent_thought_chunk`: transcript only.
-- `tool_call` / `tool_call_update`: title → progress; transcript.
+- `agent_thought_chunk`: ignored.
+- `tool_call` / `tool_call_update`: title → progress.
 - `usage_update` → `cost_usd` (last value; it's cumulative); `PromptResponse.usage` → tokens (summed across turns).
 - `notice` (unstable, but claude sends it) → `warnings`.
-- everything else: transcript only.
+- everything else: ignored.
 
 ## 5. Permissions
 
@@ -296,11 +305,11 @@ One mechanism for all harnesses, transport-independent, no network:
 - Depth: the server reads `THRONG_MCP_DEPTH` (default 0), sets `+1` for the child; `depth + 1 > max_depth (2)` → tool error `depth_exceeded` before spawn. A nested claude session sees the same user-scope server; the guard exists for it.
 - `timeout_s` default 21600. Handshake 60 s. Elicitation 10 min. All in config.
 - Progress (`notifications/progress`, when a `progressToken` arrived): on every `tool_call` (title), on agent text (at most once per 2 s), heartbeat every 30 s with elapsed time. This keeps Claude Code's idle timeout (30 min) from firing on long turns.
-- Prompt prefix (`prompt.ts`), always: executor, not orchestrator. Don't run the project's routine cycles/workflows from CLAUDE.md/AGENTS.md, don't commit or push unless told, don't kill other processes, nested agents/subagents are allowed, when the task can't be done say so plainly, no placeholders. The text is one file, editable without touching code.
+- Prompt prefix (`prompt.ts`), always: the agent runs as a nested session and its final message goes back to the caller as the result. No rules on how to work (orchestration, workflows, commits): that is the caller's prompt, not the server's business.
 
 ## 8. Config, sessions, logs
 
-`~/.config/throng/config.yaml` (optional, path via `THRONG_MCP_CONFIG`). Session records and run transcripts live under `~/.cache/throng` (path via `THRONG_MCP_CACHE_DIR`). All env vars of the server use the `THRONG_MCP_` prefix.
+`~/.config/throng/config.yaml` (optional, path via `THRONG_MCP_CONFIG`). Session records live under `~/.cache/throng` (path via `THRONG_MCP_CACHE_DIR`). All env vars of the server use the `THRONG_MCP_` prefix.
 ```yaml
 permissions: auto            # auto | allow_all | deny_all | elicit; global default
 harnesses:
@@ -323,11 +332,11 @@ Config validation with zod; an error goes to stderr at server start and into `li
 
 Session records: `~/.cache/throng/sessions/<session_id>.json` = `{ harness, model, effort, cwd, created_at, last_used_at }`, keyed by the harness's own ACP session id (UUID-like in all three; collisions across harnesses are not a practical concern). Written when the ACP session exists, updated on every resume. Records survive server restarts.
 
-Logs: server stderr has short lines (worker start/stop, errors, transcript path). Each call that reached an ACP session gets a transcript at `~/.cache/throng/runs/<ts>-<harness>-<id>.jsonl` (a call that failed before that leaves none: the tool error carries the cause): input (prompt length only), all ACP events, permission decisions, stderr tail, outcome. Not returned to the caller; it's for debugging by hand. Rotation: runs and session records older than 14 days are deleted at start.
+Logs: server stderr has short lines (worker start/stop, errors, every permission decision, each call's outcome). throng keeps no transcripts: the full history of a session is in the harness's own log, found by `session_id` (Claude Code `~/.claude/projects/`, Codex `~/.codex/sessions/`, OpenCode its storage). Rotation: session records older than 14 days are deleted at start.
 
 ## 9. Package, language, tests
 
-- `package.json`: `private`, `type: module`, `engines.node >= 24`, no `bin`. pnpm. Dependencies: `@modelcontextprotocol/sdk` ^1 (latest), `@agentclientprotocol/sdk` 1.5.0, `ajv` ^8, `zod` ^4, `yaml` ^2. Dev: `typescript`, `@types/node`. No adapters (§4.1).
+- `package.json`: `private`, `type: module`, `engines.node >= 24`, no `bin`. pnpm. Dependencies: `@modelcontextprotocol/sdk` ^1 (latest), `@agentclientprotocol/sdk` ^1.5.0, `ajv` ^8, `zod` ^4, `yaml` ^2. Dev: `typescript`, `@types/node`. No adapters (§4.1).
 - Run with `node src/mcp.ts`, no transpilation (type stripping): no `enum`, `namespace`, parameter properties, `import =`. tsconfig: `strict`, `erasableSyntaxOnly`, `verbatimModuleSyntax`, `allowImportingTsExtensions`, `module: nodenext`, `noEmit`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. Imports with `.ts`.
 - Scripts: `pnpm typecheck` (`tsc --noEmit`), `pnpm test` (`node --test "test/*.test.ts"`; a bare directory is not accepted by Node 24), `pnpm smoke:<harness>`.
 - Tests without an LLM: `test/fake-agent` is an ACP agent on the agent-side SDK, scenarios via env (`FAKE_SCENARIO=echo|permission|submit-valid|submit-invalid-then-valid|resume|hang|crash-on-prompt|notice`). They cover Worker, collector, permissions (all 4 policies; elicit through a fake MCP client with the capability), structured (both re-prompt branches), resume, timeouts, cancel, tree kill (fake-agent spawns a grandchild `sleep`; after close it's gone), depth, semaphore, agent-spec parsing.

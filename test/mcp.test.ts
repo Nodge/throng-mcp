@@ -61,8 +61,8 @@ function tagAlive(tag: string): boolean {
 function assertInstallHints(unavailable: ListHarnessesOutput['unavailable'], harnesses: string[]): void {
   assert.deepEqual(unavailable.map((u) => u.harness), harnesses);
   const hints: Record<string, string> = {
-    claude: 'claude-agent-acp not found on PATH; install: npm i -g @agentclientprotocol/claude-agent-acp@0.81.2',
-    codex: 'codex-acp not found on PATH; install: npm i -g @agentclientprotocol/codex-acp@1.13.1',
+    claude: 'claude-agent-acp not found on PATH; install: npm i -g @agentclientprotocol/claude-agent-acp',
+    codex: 'codex-acp not found on PATH; install: npm i -g @agentclientprotocol/codex-acp',
     opencode: 'opencode not found on PATH; install: see https://opencode.ai/docs (binary install)',
   };
   for (const { harness, reason } of unavailable) assert.equal(reason, hints[harness]);

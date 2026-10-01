@@ -1,10 +1,5 @@
-import { isAbsolute } from 'node:path';
-import { z } from 'zod';
-import type { ErrorCode, Usage } from './errors.ts';
-
-// External contract of the MCP tools (DESIGN §3). Input schemas are zod raw shapes for
-// `McpServer.registerTool`; invalid input is rejected by the SDK's validation before our code runs.
-// Output types describe the single JSON text block in `content[0].text` (decision-2).
+// External contract of the tools (DESIGN §3): results and failure codes. Transport-agnostic; the inputs are
+// described by each tool's schema in src/mcp/tools/.
 
 /** Effort suffix of the agent spec (DESIGN §3.1). Anything else after `:` stays part of the model name. */
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
@@ -13,29 +8,13 @@ export type Effort = (typeof EFFORT_LEVELS)[number];
 export const HARNESS_IDS = ['claude', 'codex', 'opencode'] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
-const jsonSchemaObject = z.record(z.string(), z.unknown());
-
-export const runThrongletInput = {
-  agent: z.string().describe('Agent spec: <harness>/<model>[:<effort>], e.g. claude/opus-5-5:max, codex/gpt-6-sol:xhigh'),
-  prompt: z.string().describe('Self-contained task: the nested session does not see this conversation'),
-  cwd: z.string().refine(isAbsolute, 'cwd must be an absolute path').describe('Absolute path; the harness edits this tree directly'),
-  schema: jsonSchemaObject.optional().describe('JSON Schema for structured output; the result comes back in `structured`'),
-  timeout_s: z.number().positive().optional().describe('Wall-clock limit for the run; default from config (21600)'),
-};
-
-export const resumeThrongletInput = {
-  session_id: z.string().describe('session_id from a previous run_thronglet / resume_thronglet'),
-  prompt: z.string(),
-  schema: jsonSchemaObject.optional(),
-  timeout_s: z.number().positive().optional(),
-};
-
-export const listHarnessesInput = {};
-
-export type RunThrongletInput = z.infer<z.ZodObject<typeof runThrongletInput>>;
-export type ResumeThrongletInput = z.infer<z.ZodObject<typeof resumeThrongletInput>>;
-
 export type StopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal';
+
+export interface Usage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cost_usd?: number;
+}
 
 export interface RunSuccess {
   session_id: string;
@@ -75,4 +54,59 @@ export interface ListHarnessesOutput {
     default_timeout_s: number;
     current_depth: number;
   };
+}
+
+/** Failure codes of `run_thronglet` / `resume_thronglet` (DESIGN §3.2). */
+export type ErrorCode =
+  | 'harness_unavailable'
+  | 'depth_exceeded'
+  | 'elicitation_unsupported'
+  | 'session_not_found'
+  | 'spawn_failed'
+  | 'handshake_timeout'
+  | 'handshake_failed'
+  | 'model_rejected'
+  | 'timeout'
+  | 'cancelled'
+  | 'transport_lost'
+  | 'empty_result'
+  | 'structured_missing'
+  | 'structured_invalid'
+  | 'refusal'
+  | 'agent_error';
+
+/** Everything a failed run knows besides the code and the message: partial results the caller can still use. */
+export interface FailureContext {
+  session_id?: string;
+  text?: string;
+  usage?: Usage;
+  warnings?: string[];
+}
+
+/**
+ * A run failure that becomes a tool error with the DESIGN §3.2 payload.
+ * `message` carries the actual text (adapter stderr excerpt, list of valid models), not a paraphrase.
+ */
+export class ThrongError extends Error {
+  readonly code: ErrorCode;
+  readonly context: FailureContext;
+
+  constructor(code: ErrorCode, message: string, context: FailureContext = {}) {
+    super(message);
+    this.name = 'ThrongError';
+    this.code = code;
+    this.context = context;
+  }
+}
+
+/**
+ * Anything thrown that is not a ThrongError is reported as `agent_error` with its message.
+ * `context` fills in what the error itself doesn't carry (e.g. session_id known only to the caller).
+ */
+export function toThrongError(err: unknown, context: FailureContext = {}): ThrongError {
+  if (err instanceof ThrongError) {
+    return new ThrongError(err.code, err.message, { ...context, ...err.context });
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return new ThrongError('agent_error', message, context);
 }

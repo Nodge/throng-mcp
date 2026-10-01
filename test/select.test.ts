@@ -5,7 +5,7 @@ import { after, describe, it } from 'node:test';
 import { Collector } from '../src/acp/collector.ts';
 import type { Worker } from '../src/acp/types.ts';
 import { startWorker } from '../src/acp/worker.ts';
-import { ThrongError } from '../src/errors.ts';
+import { ThrongError } from '../src/contract.ts';
 import { HARNESSES } from '../src/harnesses/index.ts';
 import { modelRejectedMessage, optionByCategory, selectEffort, selectModel } from '../src/harnesses/select.ts';
 import { type FakeScenario, fakeAgentSpawn } from './fake-agent/index.ts';
