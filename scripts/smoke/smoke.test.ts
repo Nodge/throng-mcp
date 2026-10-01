@@ -27,134 +27,145 @@ mkdirSync(tmp);
 
 const tags: string[] = [];
 afterAll(() => {
-  for (const tag of tags) {
-    try {
-      execFileSync('pkill', ['-9', '-f', tag]);
-    } catch {
-      // nothing matched
+    for (const tag of tags) {
+        try {
+            execFileSync('pkill', ['-9', '-f', tag]);
+        } catch {
+            // nothing matched
+        }
     }
-  }
-  rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
 });
 
 function tagAlive(tag: string): boolean {
-  try {
-    execFileSync('pgrep', ['-f', tag]);
-    return true;
-  } catch {
-    return false;
-  }
+    try {
+        execFileSync('pgrep', ['-f', tag]);
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 /** Env like src/mcp.test.ts serverEnv(), with `claude` pointed at the fake agent in `scenario`. */
 function smokeEnv(scenario: string, tag: string, path: string): Record<string, string> {
-  const config = join(dir, `${tag}.yaml`);
-  writeFileSync(
-    config,
-    [
-      'harnesses:',
-      '  claude:',
-      `    command: ${JSON.stringify(process.execPath)}`,
-      `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
-      `    env: { FAKE_SCENARIO: ${scenario} }`,
-      '',
-    ].join('\n'),
-  );
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith('THRONG_MCP_')) env[key] = value;
-  }
-  return { ...env, THRONG_MCP_CONFIG: config, THRONG_MCP_CACHE_DIR: join(dir, 'cache'), PATH: path, TMPDIR: tmp };
+    const config = join(dir, `${tag}.yaml`);
+    writeFileSync(
+        config,
+        [
+            'harnesses:',
+            '  claude:',
+            `    command: ${JSON.stringify(process.execPath)}`,
+            `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
+            `    env: { FAKE_SCENARIO: ${scenario} }`,
+            '',
+        ].join('\n')
+    );
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+        if (value !== undefined && !key.startsWith('THRONG_MCP_')) env[key] = value;
+    }
+    return { ...env, THRONG_MCP_CONFIG: config, THRONG_MCP_CACHE_DIR: join(dir, 'cache'), PATH: path, TMPDIR: tmp };
 }
 
-function smoke(args: string[], scenario = 'echo', path = bin): Promise<{ code: number | null; stdout: string; stderr: string; tag: string }> {
-  const tag = `fake-agent-${randomUUID()}`;
-  tags.push(tag);
-  return new Promise((resolve) => {
-    execFile(
-      process.execPath,
-      ['scripts/smoke/smoke.ts', ...args],
-      { cwd: repo, env: smokeEnv(scenario, tag, path), timeout: 60_000 },
-      (err, stdout, stderr) => {
-        const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
-        resolve({ code, stdout, stderr, tag });
-      },
-    );
-  });
+function smoke(
+    args: string[],
+    scenario = 'echo',
+    path = bin
+): Promise<{ code: number | null; stdout: string; stderr: string; tag: string }> {
+    const tag = `fake-agent-${randomUUID()}`;
+    tags.push(tag);
+    return new Promise(resolve => {
+        execFile(
+            process.execPath,
+            ['scripts/smoke/smoke.ts', ...args],
+            { cwd: repo, env: smokeEnv(scenario, tag, path), timeout: 60_000 },
+            (err, stdout, stderr) => {
+                const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
+                resolve({ code, stdout, stderr, tag });
+            }
+        );
+    });
 }
 
 describe('smoke script against the fake agent', () => {
-  it('passes when the agent writes pong.txt', async () => {
-    const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--prompt', 'x'], 'write-pong');
-    expect(code, stdout + stderr).toBe(0);
-    expect(stdout).toMatch(/PASS: pong\.txt written/);
-    expect(stdout).toMatch(/^\d+\. resume_thronglet session_id=fake-/m);
-    expect(stdout).toMatch(/PASS: resume answered pong\.txt/);
-    expect(stdout).toMatch(/adapter processes before: (none|[\d ]+)$/m);
-    expect(stdout).toMatch(/PASS: no orphans/);
-    expect(stdout).toMatch(/session_id: fake-[0-9a-f-]+/);
-    expect(stderr).toMatch(/\[server\] .*throng started/);
-    expect(tagAlive(tag), 'fake agent left running').toBe(false);
-  });
+    it('passes when the agent writes pong.txt', async () => {
+        const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--prompt', 'x'], 'write-pong');
+        expect(code, stdout + stderr).toBe(0);
+        expect(stdout).toMatch(/PASS: pong\.txt written/);
+        expect(stdout).toMatch(/^\d+\. resume_thronglet session_id=fake-/m);
+        expect(stdout).toMatch(/PASS: resume answered pong\.txt/);
+        expect(stdout).toMatch(/adapter processes before: (none|[\d ]+)$/m);
+        expect(stdout).toMatch(/PASS: no orphans/);
+        expect(stdout).toMatch(/session_id: fake-[0-9a-f-]+/);
+        expect(stderr).toMatch(/\[server\] .*throng started/);
+        expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
 
-  it('--no-resume skips the resume step', async () => {
-    const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--prompt', 'x', '--no-resume'], 'write-pong');
-    expect(code, stdout + stderr).toBe(0);
-    expect(stdout).toMatch(/PASS: pong\.txt written/);
-    expect(stdout).toMatch(/resume step skipped \(--no-resume\)/);
-    expect(stdout).not.toMatch(/\. resume_thronglet/);
-    expect(stdout).toMatch(/PASS: no orphans/);
-    expect(tagAlive(tag), 'fake agent left running').toBe(false);
-  });
+    it('--no-resume skips the resume step', async () => {
+        const { code, stdout, stderr, tag } = await smoke(
+            ['claude/fake-small', '--prompt', 'x', '--no-resume'],
+            'write-pong'
+        );
+        expect(code, stdout + stderr).toBe(0);
+        expect(stdout).toMatch(/PASS: pong\.txt written/);
+        expect(stdout).toMatch(/resume step skipped \(--no-resume\)/);
+        expect(stdout).not.toMatch(/\. resume_thronglet/);
+        expect(stdout).toMatch(/PASS: no orphans/);
+        expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
 
-  it('fails when the run succeeds but no file is written', async () => {
-    const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--prompt', 'x'], 'echo');
-    expect(code, stdout + stderr).toBe(1);
-    expect(stdout).toMatch(/isError: false/);
-    expect(stdout).toMatch(/FAIL: pong\.txt/);
-    expect(stdout).toMatch(/kept cwd for inspection: /);
-    expect(stderr).toMatch(/\[progress\] \d+ read README\.md/);
-    expect(tagAlive(tag), 'fake agent left running').toBe(false);
-  });
+    it('fails when the run succeeds but no file is written', async () => {
+        const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--prompt', 'x'], 'echo');
+        expect(code, stdout + stderr).toBe(1);
+        expect(stdout).toMatch(/isError: false/);
+        expect(stdout).toMatch(/FAIL: pong\.txt/);
+        expect(stdout).toMatch(/kept cwd for inspection: /);
+        expect(stderr).toMatch(/\[progress\] \d+ read README\.md/);
+        expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
 
-  it('fails the orphan check when pgrep cannot run', async () => {
-    const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--prompt', 'x'], 'write-pong', binNoPgrep);
-    expect(code, stdout + stderr).toBe(1);
-    expect(stdout).toMatch(/PASS: pong\.txt written/);
-    expect(stdout).toMatch(/FAIL: cannot check orphans \(pgrep failed: .*ENOENT/);
-    expect(stdout).not.toMatch(/PASS: no orphans/);
-    expect(tagAlive(tag), 'fake agent left running').toBe(false);
-  });
+    it('fails the orphan check when pgrep cannot run', async () => {
+        const { code, stdout, stderr, tag } = await smoke(
+            ['claude/fake-small', '--prompt', 'x'],
+            'write-pong',
+            binNoPgrep
+        );
+        expect(code, stdout + stderr).toBe(1);
+        expect(stdout).toMatch(/PASS: pong\.txt written/);
+        expect(stdout).toMatch(/FAIL: cannot check orphans \(pgrep failed: .*ENOENT/);
+        expect(stdout).not.toMatch(/PASS: no orphans/);
+        expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
 
-  it('refuses a --cwd that already has pong.txt', async () => {
-    const cwd = join(dir, 'stale');
-    mkdirSync(cwd);
-    writeFileSync(join(cwd, 'pong.txt'), 'pong');
-    const { code, stdout, stderr } = await smoke(['claude/fake-small', '--cwd', cwd], 'echo');
-    expect(code, stdout + stderr).toBe(2);
-    expect(stderr).toMatch(/pong\.txt already exists; remove it or pick another --cwd/);
-    expect(stdout).not.toMatch(/run_thronglet/);
-  });
+    it('refuses a --cwd that already has pong.txt', async () => {
+        const cwd = join(dir, 'stale');
+        mkdirSync(cwd);
+        writeFileSync(join(cwd, 'pong.txt'), 'pong');
+        const { code, stdout, stderr } = await smoke(['claude/fake-small', '--cwd', cwd], 'echo');
+        expect(code, stdout + stderr).toBe(2);
+        expect(stderr).toMatch(/pong\.txt already exists; remove it or pick another --cwd/);
+        expect(stdout).not.toMatch(/run_thronglet/);
+    });
 
-  it('exits 2 and lists the valid models for an unknown model', async () => {
-    const { code, stdout, stderr, tag } = await smoke(['claude/nope']);
-    expect(code, stdout + stderr).toBe(2);
-    expect(stdout).toMatch(/model nope is not offered by claude/);
-    expect(stdout).toMatch(/^ {3}fake-small$/m);
-    expect(stdout).not.toMatch(/run_thronglet/);
-    expect(tagAlive(tag), 'fake agent left running').toBe(false);
-  });
+    it('exits 2 and lists the valid models for an unknown model', async () => {
+        const { code, stdout, stderr, tag } = await smoke(['claude/nope']);
+        expect(code, stdout + stderr).toBe(2);
+        expect(stdout).toMatch(/model nope is not offered by claude/);
+        expect(stdout).toMatch(/^ {3}fake-small$/m);
+        expect(stdout).not.toMatch(/run_thronglet/);
+        expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
 
-  it('exits 2 with the install hint when the adapter is not on PATH', async () => {
-    const { code, stdout, stderr } = await smoke(['codex/x']);
-    expect(code, stdout + stderr).toBe(2);
-    expect(stdout).toMatch(/codex-acp not found on PATH; install: npm i -g @agentclientprotocol\/codex-acp$/m);
-    expect(stdout).toMatch(/harness codex is not available/);
-  });
+    it('exits 2 with the install hint when the adapter is not on PATH', async () => {
+        const { code, stdout, stderr } = await smoke(['codex/x']);
+        expect(code, stdout + stderr).toBe(2);
+        expect(stdout).toMatch(/codex-acp not found on PATH; install: npm i -g @agentclientprotocol\/codex-acp$/m);
+        expect(stdout).toMatch(/harness codex is not available/);
+    });
 
-  it('prints usage and exits 2 without an agent spec', async () => {
-    const { code, stderr } = await smoke([]);
-    expect(code).toBe(2);
-    expect(stderr).toMatch(/^usage: /m);
-  });
+    it('prints usage and exits 2 without an agent spec', async () => {
+        const { code, stderr } = await smoke([]);
+        expect(code).toBe(2);
+        expect(stderr).toMatch(/^usage: /m);
+    });
 });

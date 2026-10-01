@@ -7,5 +7,5 @@ Task:`;
 
 /** Final prompt text sent to the harness. */
 export function buildPrompt(task: string): string {
-  return `${EXECUTOR_PREFIX}\n\n${task}`;
+    return `${EXECUTOR_PREFIX}\n\n${task}`;
 }

@@ -9,5 +9,5 @@ export { findOnPath, installHint, loadRegistry } from './discovery.ts';
 export const HARNESSES: Record<HarnessId, HarnessDefinition> = { claude, codex, opencode };
 
 export function harnessById(id: HarnessId): HarnessDefinition {
-  return HARNESSES[id];
+    return HARNESSES[id];
 }
