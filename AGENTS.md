@@ -39,9 +39,9 @@ Work found outside a task's acceptance criteria is not added silently: describe 
 ## Code rules
 
 - Stack and TS constraints: DESIGN §9. Runs as `node src/mcp.ts` with no build step, so only erasable TS syntax; imports with `.ts`.
-- Tests don't call LLMs: everything goes through `test/fake-agent`. Real harnesses only in `scripts/smoke/`, run by hand.
+- Tests are vitest and live next to the code (`src/foo.test.ts` for `src/foo.ts`). They don't call LLMs: everything goes through `test/fake-agent`. Real harnesses only in `scripts/smoke/`, run by hand.
 - Nothing outside the project directory is touched by tasks: no registering the server in the user-scope Claude config, no edits under `~/.claude/*`. README gives the maintainer the commands to run.
-- Gates before any commit: `pnpm typecheck && pnpm test`.
+- Gates before any commit: `pnpm typecheck && pnpm lint && pnpm test`. Formatting is prettier, applied by the pre-commit hook; don't hand-format.
 
 ## End of stage
 

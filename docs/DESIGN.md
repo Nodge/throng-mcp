@@ -195,10 +195,10 @@ src/
   prompt.ts                 — prompt prefix, submit_result instructions
   progress.ts               — Progress interface (the MCP implementation is mcp/progress.ts)
   semaphore.ts log.ts
+  **/*.test.ts              — vitest, next to the module under test
 test/
   fake-agent/               — minimal ACP agent on @agentclientprotocol/sdk (agent side), scenarios via env
-  *.test.ts                 — node:test
-scripts/smoke/              — runs against real harnesses (manual)
+scripts/smoke/              — runs against real harnesses (manual); smoke.test.ts drives it against the fake agent
 ```
 
 Layers: `mcp/` knows about MCP and nothing else calls it; `run.ts` gets progress and the cancel signal through plain interfaces and knows about Worker; Worker knows about ACP and the process, not about MCP; HarnessDefinition is plain data plus 3 hooks. Swapping the transport (ACP v2) = a new Worker with the same interface.
@@ -336,9 +336,9 @@ Logs: server stderr has short lines (worker start/stop, errors, every permission
 
 ## 9. Package, language, tests
 
-- `package.json`: `private`, `type: module`, `engines.node >= 24`, no `bin`. pnpm. Dependencies: `@modelcontextprotocol/sdk` ^1 (latest), `@agentclientprotocol/sdk` ^1.5.0, `ajv` ^8, `zod` ^4, `yaml` ^2. Dev: `typescript`, `@types/node`. No adapters (§4.1).
+- `package.json`: `private`, `type: module`, `engines.node >= 24`, no `bin`. pnpm. Dependencies: `@modelcontextprotocol/sdk` ^1 (latest), `@agentclientprotocol/sdk` ^1.5.0, `ajv` ^8, `zod` ^4, `yaml` ^2. Dev: `typescript` (6.x: typescript-eslint has no support for the 7.x native compiler package yet), `@types/node`, `vitest`, `eslint` + `typescript-eslint` (`strictTypeChecked` + `stylisticTypeChecked`), `prettier`, `lefthook`. No adapters (§4.1).
 - Run with `node src/mcp.ts`, no transpilation (type stripping): no `enum`, `namespace`, parameter properties, `import =`. tsconfig: `strict`, `erasableSyntaxOnly`, `verbatimModuleSyntax`, `allowImportingTsExtensions`, `module: nodenext`, `noEmit`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. Imports with `.ts`.
-- Scripts: `pnpm typecheck` (`tsc --noEmit`), `pnpm test` (`node --test "test/*.test.ts"`; a bare directory is not accepted by Node 24), `pnpm smoke:<harness>`.
+- Scripts: `pnpm typecheck` (`tsc --noEmit`), `pnpm test` (`vitest --run`; `pnpm test:watch` for watch mode), `pnpm lint` (`eslint .`), `pnpm fmt` (`prettier --write`), `pnpm smoke:<harness>`. The `ci:*` variants are what GitHub Actions runs (`.github/workflows/ci.yml`: lint, typecheck, prettier check, tests on Node 24 and 26). The lefthook pre-commit hook runs fmt, lint --fix and typecheck.
 - Tests without an LLM: `test/fake-agent` is an ACP agent on the agent-side SDK, scenarios via env (`FAKE_SCENARIO=echo|permission|submit-valid|submit-invalid-then-valid|resume|hang|crash-on-prompt|notice`). They cover Worker, collector, permissions (all 4 policies; elicit through a fake MCP client with the capability), structured (both re-prompt branches), resume, timeouts, cancel, tree kill (fake-agent spawns a grandchild `sleep`; after close it's gone), depth, semaphore, agent-spec parsing.
 - Smoke on real harnesses (manual, one at a time; per-stage lists are in the backlog tasks): claude/codex/opencode × `auto`, opencode with a custom provider, Esc → no orphans, a call > 2 min from the main session goes to the background; v2 adds codex+schema, resume with a follow-up question, elicit from an interactive session.
 

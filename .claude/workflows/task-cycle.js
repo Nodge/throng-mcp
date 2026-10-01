@@ -18,7 +18,7 @@ const input = typeof args === 'string' ? JSON.parse(args) : args
 const REPO = (input && input.repo) || 'the current working directory'
 const taskId = input && input.taskId
 const brief = input && input.brief
-const gateCmd = (input && input.gateCmd) || 'pnpm typecheck && pnpm test'
+const gateCmd = (input && input.gateCmd) || 'pnpm typecheck && pnpm lint && pnpm test'
 const maxFixRounds = (input && input.maxFixRounds) != null ? input.maxFixRounds : 2
 // Who writes code: native Opus subagent (default) or a Codex thronglet.
 // Review, triage and verification don't depend on this choice.

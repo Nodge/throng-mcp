@@ -21,7 +21,7 @@ export interface ToolEnv {
   callRun(
     extra: ProgressExtra & { signal: AbortSignal },
     start: (ctx: RunContext) => Promise<RunOutcome>,
-  ): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }>;
+  ): Promise<{ content: { type: 'text'; text: string }[]; isError?: boolean }>;
   /** Marks a call in flight, so that shutdown waits for it. */
   track<T>(call: Promise<T>): Promise<T>;
 }
@@ -37,7 +37,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): Tools {
   const inflight = new Set<Promise<unknown>>();
   const track = <T>(call: Promise<T>): Promise<T> => {
     inflight.add(call);
-    call.finally(() => inflight.delete(call)).catch(() => {});
+    call.finally(() => inflight.delete(call)).catch(() => { /* ignored */ });
     return call;
   };
 

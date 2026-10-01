@@ -191,10 +191,10 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
       onLateStop: (late) => collector.endTurn(late),
     });
     collector.endTurn(response);
-    return finish(response);
+    return finish(response, sessionId);
   };
 
-  const finish = (response: PromptResponse): RunSuccess => {
+  const finish = (response: PromptResponse, id: string): RunSuccess => {
     const text = collector.text;
     switch (response.stopReason) {
       case 'end_turn':
@@ -211,7 +211,7 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         throw new ThrongError('agent_error', `unknown stop_reason ${JSON.stringify(response.stopReason)}`);
     }
     const payload: RunSuccess = {
-      session_id: sessionId!,
+      session_id: id,
       text,
       stop_reason: response.stopReason,
       usage: collector.usage,

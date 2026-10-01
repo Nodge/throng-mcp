@@ -31,7 +31,7 @@ export function runThronglet(input: RunThrongletInput, ctx: RunContext): Promise
       schema: input.schema,
       timeout_s: input.timeout_s,
       logFields: { agent: input.agent },
-      request: async () => ({ kind: 'new', spec: parseAgentSpec(input.agent), cwd: input.cwd }),
+      request: () => Promise.resolve({ kind: 'new', spec: parseAgentSpec(input.agent), cwd: input.cwd }),
     },
     ctx,
   );

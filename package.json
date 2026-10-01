@@ -10,7 +10,14 @@
   "scripts": {
     "start": "node src/mcp.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/*.test.ts\"",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "fmt": "prettier --write . --log-level error",
+    "ci:lint": "eslint .",
+    "ci:fmt": "prettier --check .",
+    "ci:typecheck": "tsc --noEmit",
+    "ci:tests": "vitest --run",
     "smoke": "node scripts/smoke/smoke.ts",
     "smoke:claude": "node scripts/smoke/smoke.ts claude/haiku",
     "smoke:codex": "node scripts/smoke/smoke.ts codex/gpt-6-luna",
@@ -24,7 +31,13 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.19.0",
-    "typescript": "^7.0.2"
+    "eslint": "^10.11.0",
+    "lefthook": "^2.1.15",
+    "prettier": "^3.9.9",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^5.0.3"
   }
 }

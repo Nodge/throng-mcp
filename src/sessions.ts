@@ -18,6 +18,7 @@ export interface SessionRecord {
 
 /** `THRONG_MCP_CACHE_DIR` or `~/.cache/throng`. */
 export function cacheDir(env: NodeJS.ProcessEnv = process.env): string {
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty variable means unset
   return env.THRONG_MCP_CACHE_DIR || join(homedir(), '.cache', 'throng');
 }
 
@@ -37,7 +38,7 @@ async function writeAtomic(path: string, content: string): Promise<void> {
     await writeFile(tmp, content);
     await rename(tmp, path);
   } catch (err) {
-    await unlink(tmp).catch(() => {});
+    await unlink(tmp).catch(() => { /* ignored */ });
     throw err;
   }
 }

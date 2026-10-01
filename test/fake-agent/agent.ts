@@ -102,7 +102,7 @@ function getSession(sessionId: string): FakeSession {
 
 function optionValue(session: FakeSession, id: string): string {
   const option = session.configOptions.find((o) => o.id === id);
-  return option && option.type === 'select' ? option.currentValue : '?';
+  return option?.type === 'select' ? option.currentValue : '?';
 }
 
 function selectValues(option: SessionConfigOption): string[] {
@@ -158,7 +158,7 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
     case 'crash-on-prompt':
     case 'orphan-crash':
       process.stderr.write('fake-agent: boom\n', () => process.exit(3));
-      await new Promise(() => {});
+      await new Promise(() => { /* never settles */ });
       return;
     case 'permission': {
       const answer = await client.request(acp.methods.client.session.requestPermission, {
@@ -175,7 +175,7 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
       return;
     }
     case 'fs-call':
-      await client.request(acp.methods.client.fs.readTextFile, { sessionId, path: '/etc/hosts' }).catch(() => {});
+      await client.request(acp.methods.client.fs.readTextFile, { sessionId, path: '/etc/hosts' }).catch(() => { /* ignored */ });
       break;
     case 'notice':
       await send({ sessionUpdate: 'notice', severity: 'warning', title: 'fake notice', description: 'mode fell back' });
@@ -228,7 +228,7 @@ async function earlyUpdate(sessionId: string, client: AgentContext): Promise<voi
 let app = acp.agent({ name: 'fake-agent' });
 
 app = scenario === 'handshake-hang'
-  ? app.onRequest('initialize', () => new Promise(() => {}))
+  ? app.onRequest('initialize', () => new Promise(() => { /* never settles */ }))
   : app.onRequest('initialize', () => ({
       protocolVersion: acp.PROTOCOL_VERSION,
       agentInfo: { name: 'fake-agent', version: '0.0.1' },
@@ -282,7 +282,7 @@ app
     const session = getSession(ctx.params.sessionId);
     const { configId, value } = ctx.params;
     const option = session.configOptions.find((o) => o.id === configId);
-    if (!option || option.type !== 'select') {
+    if (option?.type !== 'select') {
       const ids = session.configOptions.map((o) => o.id);
       throw acp.RequestError.invalidParams(undefined, `unknown config option ${configId}; valid: ${ids.join(', ')}`);
     }

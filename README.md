@@ -220,6 +220,6 @@ Record the adapter versions `list_harnesses` reported in the backlog task notes.
 
 ## Development
 
-- Gates: `pnpm typecheck && pnpm test`.
-- Tests drive `test/fake-agent` (an ACP agent with scripted scenarios) and never call an LLM; real harnesses only in `scripts/smoke/`, run by hand.
+- Gates: `pnpm typecheck && pnpm lint && pnpm test`. The pre-commit hook (lefthook, installed by `pnpm install`) formats with prettier, runs `eslint --fix` and typecheck.
+- Tests are vitest, next to the code (`src/**/*.test.ts`). They drive `test/fake-agent` (an ACP agent with scripted scenarios) and never call an LLM; real harnesses only in `scripts/smoke/`, run by hand.
 - Design: [docs/DESIGN.md](docs/DESIGN.md). Process: [AGENTS.md](AGENTS.md).

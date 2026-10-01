@@ -47,7 +47,7 @@ export interface HarnessInfo {
 
 export interface ListHarnessesOutput {
   harnesses: HarnessInfo[];
-  unavailable: Array<{ harness: string; reason: string }>;
+  unavailable: { harness: string; reason: string }[];
   limits: {
     max_concurrency: number;
     max_depth: number;

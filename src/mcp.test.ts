@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -6,15 +5,15 @@ import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { after, describe, it } from 'node:test';
+import { afterAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { ListHarnessesOutput, RunFailure, RunSuccess } from '../src/contract.ts';
+import type { ListHarnessesOutput, RunFailure, RunSuccess } from './contract.ts';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'throng-mcp-'));
-const fakeAgent = fileURLToPath(new URL('./fake-agent/agent.ts', import.meta.url));
+const fakeAgent = fileURLToPath(new URL('../test/fake-agent/agent.ts', import.meta.url));
 
 // PATH for the server: only `node`, so list_harnesses never finds (and probes) a real adapter.
 const bin = join(dir, 'bin');
@@ -22,7 +21,7 @@ mkdirSync(bin);
 symlinkSync(process.execPath, join(bin, 'node'));
 
 const tags: string[] = [];
-after(() => {
+afterAll(() => {
   for (const tag of tags) {
     try {
       execFileSync('pkill', ['-9', '-f', tag]);
@@ -59,19 +58,19 @@ function tagAlive(tag: string): boolean {
 }
 
 function assertInstallHints(unavailable: ListHarnessesOutput['unavailable'], harnesses: string[]): void {
-  assert.deepEqual(unavailable.map((u) => u.harness), harnesses);
+  expect(unavailable.map((u) => u.harness)).toStrictEqual(harnesses);
   const hints: Record<string, string> = {
     claude: 'claude-agent-acp not found on PATH; install: npm i -g @agentclientprotocol/claude-agent-acp',
     codex: 'codex-acp not found on PATH; install: npm i -g @agentclientprotocol/codex-acp',
     opencode: 'opencode not found on PATH; install: see https://opencode.ai/docs (binary install)',
   };
-  for (const { harness, reason } of unavailable) assert.equal(reason, hints[harness]);
+  for (const { harness, reason } of unavailable) expect(reason).toBe(hints[harness]);
 }
 
 async function waitFor(check: () => boolean, ms: number, what: string): Promise<void> {
   const deadline = Date.now() + ms;
   while (!check()) {
-    if (Date.now() > deadline) assert.fail(what);
+    if (Date.now() > deadline) expect.unreachable(what);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
@@ -99,33 +98,33 @@ async function callListHarnesses(env: Record<string, string>): Promise<{ tools: 
   const client = new Client({ name: 'throng-test', version: '0' });
   await client.connect(transport);
   const pid = transport.pid;
-  assert.ok(pid, 'server pid');
+  if (!pid) expect.unreachable('server pid');
   try {
     const { tools } = await client.listTools();
     const result = await client.callTool({ name: 'list_harnesses', arguments: {} });
-    assert.equal(result.isError, undefined);
-    assert.equal(result.structuredContent, undefined);
-    const content = result.content as Array<{ type: string; text: string }>;
-    assert.equal(content.length, 1);
-    assert.equal(content[0]?.type, 'text');
+    expect(result.isError).toBe(undefined);
+    expect(result.structuredContent).toBe(undefined);
+    const content = result.content as { type: string; text: string }[];
+    expect(content.length).toBe(1);
+    expect(content[0]?.type).toBe('text');
     return { tools: tools.map((t) => t.name), out: JSON.parse(content[0]?.text ?? '') as ListHarnessesOutput };
   } finally {
     const started = Date.now();
     await client.close();
     // The client escalates to SIGTERM after 2 s; exiting well before that means the server handled stdin EOF itself.
-    assert.ok(Date.now() - started < 1500, `server took ${Date.now() - started} ms to exit`);
-    assert.equal(isAlive(pid), false, 'server process still alive');
-    assert.match(stderr, /throng stopping why=stdin closed/);
+    expect(Date.now() - started < 1500, `server took ${Date.now() - started} ms to exit`).toBe(true);
+    expect(isAlive(pid), 'server process still alive').toBe(false);
+    expect(stderr).toMatch(/throng stopping why=stdin closed/);
   }
 }
 
 describe('mcp server over stdio', () => {
   it('without adapters on PATH: every harness unavailable with its install hint, default limits', async () => {
     const { tools, out } = await callListHarnesses(serverEnv({}));
-    assert.deepEqual(tools, ['list_harnesses', 'run_thronglet', 'resume_thronglet']);
-    assert.deepEqual(out.harnesses, []);
+    expect(tools).toStrictEqual(['list_harnesses', 'run_thronglet', 'resume_thronglet']);
+    expect(out.harnesses).toStrictEqual([]);
     assertInstallHints(out.unavailable, ['claude', 'codex', 'opencode']);
-    assert.deepEqual(out.limits, { max_concurrency: 10, max_depth: 2, default_timeout_s: 21600, current_depth: 0 });
+    expect(out.limits).toStrictEqual({ max_concurrency: 10, max_depth: 2, default_timeout_s: 21600, current_depth: 0 });
   });
 
   it('probes a configured adapter: models, efforts, version', async () => {
@@ -135,7 +134,7 @@ describe('mcp server over stdio', () => {
       `harnesses: { claude: { command: ${JSON.stringify(process.execPath)}, args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"] } }\n`,
     );
     const { out } = await callListHarnesses(serverEnv({ THRONG_MCP_CONFIG: config }));
-    assert.deepEqual(out.harnesses, [
+    expect(out.harnesses).toStrictEqual([
       {
         harness: 'claude',
         command: [process.execPath, fakeAgent, `--tag=${tag}`],
@@ -145,7 +144,7 @@ describe('mcp server over stdio', () => {
       },
     ]);
     assertInstallHints(out.unavailable, ['codex', 'opencode']);
-    assert.equal(tagAlive(tag), false, 'probed fake agent still running');
+    expect(tagAlive(tag), 'probed fake agent still running').toBe(false);
   });
 
   it('a probe that times out lands in unavailable and leaves no process behind', async () => {
@@ -163,29 +162,29 @@ describe('mcp server over stdio', () => {
       ].join('\n'),
     );
     const { out } = await callListHarnesses(serverEnv({ THRONG_MCP_CONFIG: config }));
-    assert.deepEqual(out.harnesses, []);
-    assert.deepEqual(out.unavailable.map((u) => u.harness), ['claude', 'codex', 'opencode']);
+    expect(out.harnesses).toStrictEqual([]);
+    expect(out.unavailable.map((u) => u.harness)).toStrictEqual(['claude', 'codex', 'opencode']);
     const claude = out.unavailable[0]?.reason ?? '';
-    assert.match(claude, /did not answer initialize within 1000 ms/);
+    expect(claude).toMatch(/did not answer initialize within 1000 ms/);
     assertInstallHints(out.unavailable.slice(1), ['codex', 'opencode']);
-    assert.equal(tagAlive(tag), false, 'timed-out fake agent still running');
+    expect(tagAlive(tag), 'timed-out fake agent still running').toBe(false);
   });
 
   it('reflects the config file and THRONG_MCP_DEPTH', async () => {
     const config = writeConfig('limits.yaml', 'limits: { max_depth: 3, timeout_s: 100 }\n');
     const { out } = await callListHarnesses(serverEnv({ THRONG_MCP_CONFIG: config, THRONG_MCP_DEPTH: '1' }));
-    assert.deepEqual(out.limits, { max_concurrency: 10, max_depth: 3, default_timeout_s: 100, current_depth: 1 });
+    expect(out.limits).toStrictEqual({ max_concurrency: 10, max_depth: 3, default_timeout_s: 100, current_depth: 1 });
   });
 
   it('reports a broken config in every unavailable reason', async () => {
     const config = writeConfig('broken.yaml', 'limits: [\n');
     const { out } = await callListHarnesses(serverEnv({ THRONG_MCP_CONFIG: config }));
-    assert.equal(out.unavailable.length, 3);
+    expect(out.unavailable.length).toBe(3);
     for (const { reason } of out.unavailable) {
-      assert.ok(reason.startsWith('config error: '), reason);
-      assert.ok(reason.includes(config), reason);
+      expect(reason.startsWith('config error: '), reason).toBe(true);
+      expect(reason.includes(config), reason).toBe(true);
     }
-    assert.equal(out.limits.max_depth, 2);
+    expect(out.limits.max_depth).toBe(2);
   });
 
   it('SIGTERM during a probe closes the probed adapter and removes its scratch dir', async () => {
@@ -211,16 +210,16 @@ describe('mcp server over stdio', () => {
     const client = new Client({ name: 'throng-test', version: '0' });
     await client.connect(transport);
     const pid = transport.pid;
-    assert.ok(pid, 'server pid');
+    if (!pid) expect.unreachable('server pid');
     try {
-      client.callTool({ name: 'list_harnesses', arguments: {} }).catch(() => {});
+      client.callTool({ name: 'list_harnesses', arguments: {} }).catch(() => undefined);
       await waitFor(() => tagAlive(tag), 5000, 'probed adapter never started');
-      assert.equal(readdirSync(tmp).length, 1, 'probe scratch dir');
+      expect(readdirSync(tmp).length, 'probe scratch dir').toBe(1);
       process.kill(pid, 'SIGTERM');
       await waitFor(() => !isAlive(pid), 8000, 'server did not exit after SIGTERM');
-      assert.match(stderr, /throng stopping why=SIGTERM/);
-      assert.equal(tagAlive(tag), false, 'probed adapter outlived the server');
-      assert.deepEqual(readdirSync(tmp), [], 'probe scratch dir left behind');
+      expect(stderr).toMatch(/throng stopping why=SIGTERM/);
+      expect(tagAlive(tag), 'probed adapter outlived the server').toBe(false);
+      expect(readdirSync(tmp), 'probe scratch dir left behind').toStrictEqual([]);
     } finally {
       await client.close();
     }
@@ -238,9 +237,9 @@ describe('mcp server over stdio', () => {
         child.once('exit', () => reject(new Error(`server exited early: ${stderr}`)));
       });
       child.kill(signal);
-      const [code] = await once(child, 'exit');
-      assert.equal(code, 0);
-      assert.match(stderr, new RegExp(`throng stopping why=${signal}`));
+      const [code] = (await once(child, 'exit')) as [number | null, NodeJS.Signals | null];
+      expect(code).toBe(0);
+      expect(stderr).toMatch(new RegExp(`throng stopping why=${signal}`));
     });
   }
 });
@@ -276,9 +275,9 @@ describe('run_thronglet over stdio', () => {
   }
 
   function payloadOf(result: Record<string, unknown>): unknown {
-    const content = result.content as Array<{ type: string; text: string }>;
-    assert.equal(content.length, 1);
-    assert.equal(content[0]?.type, 'text');
+    const content = result.content as { type: string; text: string }[];
+    expect(content.length).toBe(1);
+    expect(content[0]?.type).toBe('text');
     return JSON.parse(content[0]?.text ?? '');
   }
 
@@ -286,19 +285,19 @@ describe('run_thronglet over stdio', () => {
     const { client, tag, close } = await connect('echo');
     try {
       const result = await client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo } });
-      assert.equal(result.isError, undefined);
-      assert.equal(result.structuredContent, undefined);
+      expect(result.isError).toBe(undefined);
+      expect(result.structuredContent).toBe(undefined);
       const success = payloadOf(result) as RunSuccess;
-      assert.ok(success.text?.startsWith('echo: '));
-      assert.equal(success.stop_reason, 'end_turn');
-      assert.ok(success.session_id);
+      expect(success.text?.startsWith('echo: ')).toBe(true);
+      expect(success.stop_reason).toBe('end_turn');
+      expect(success.session_id).toBeTruthy();
 
       const rejected = await client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/nope', prompt: 'hi', cwd: repo } });
-      assert.equal(rejected.isError, true);
+      expect(rejected.isError).toBe(true);
       const failure = payloadOf(rejected) as RunFailure;
-      assert.equal(failure.code, 'model_rejected');
-      assert.ok(failure.session_id);
-      assert.equal(tagAlive(tag), false);
+      expect(failure.code).toBe('model_rejected');
+      expect(failure.session_id).toBeTruthy();
+      expect(tagAlive(tag)).toBe(false);
     } finally {
       await close();
     }
@@ -308,9 +307,9 @@ describe('run_thronglet over stdio', () => {
     const { client, close } = await connect('echo');
     try {
       const missing = await client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi' } });
-      assert.equal(missing.isError, true);
+      expect(missing.isError).toBe(true);
       const relative = await client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: 'src' } });
-      assert.equal(relative.isError, true);
+      expect(relative.isError).toBe(true);
     } finally {
       await close();
     }
@@ -321,11 +320,11 @@ describe('run_thronglet over stdio', () => {
     try {
       const controller = new AbortController();
       setTimeout(() => controller.abort(), 300);
-      await assert.rejects(
+      await expect(
         client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo } }, undefined, {
           signal: controller.signal,
         }),
-      );
+      ).rejects.toThrow();
       await waitFor(() => !tagAlive(tag), 2000, 'adapter outlived the cancelled call');
     } finally {
       await close();
@@ -341,8 +340,8 @@ describe('run_thronglet over stdio', () => {
         CallToolResultSchema,
         { onprogress: (p) => void messages.push(p.message ?? '') },
       );
-      assert.equal(result.isError, undefined);
-      assert.ok(messages.includes('read README.md'), JSON.stringify(messages));
+      expect(result.isError).toBe(undefined);
+      expect(messages.includes('read README.md'), JSON.stringify(messages)).toBe(true);
     } finally {
       await close();
     }
@@ -352,22 +351,22 @@ describe('run_thronglet over stdio', () => {
     const { client, tag, close } = await connect('resume-memory', { FAKE_MEMORY_DIR: mkdtempSync(join(dir, 'memory-')) });
     try {
       const run = await client.callTool({ name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'remember: banana', cwd: repo } });
-      assert.equal(run.isError, undefined);
+      expect(run.isError).toBe(undefined);
       const first = payloadOf(run) as RunSuccess;
 
       const resumed = await client.callTool({ name: 'resume_thronglet', arguments: { session_id: first.session_id, prompt: 'what did I say?' } });
-      assert.equal(resumed.isError, undefined);
-      assert.equal(resumed.structuredContent, undefined);
+      expect(resumed.isError).toBe(undefined);
+      expect(resumed.structuredContent).toBe(undefined);
       const second = payloadOf(resumed) as RunSuccess;
-      assert.equal(second.session_id, first.session_id);
-      assert.ok(second.text?.startsWith('you said: remember: banana'), second.text);
+      expect(second.session_id).toBe(first.session_id);
+      expect(second.text?.startsWith('you said: remember: banana'), second.text).toBe(true);
 
       const unknown = await client.callTool({ name: 'resume_thronglet', arguments: { session_id: 'fake-nope', prompt: 'x' } });
-      assert.equal(unknown.isError, true);
+      expect(unknown.isError).toBe(true);
       const failure = payloadOf(unknown) as RunFailure;
-      assert.equal(failure.code, 'session_not_found');
-      assert.match(failure.message, /no session record for "fake-nope"/);
-      assert.equal(tagAlive(tag), false);
+      expect(failure.code).toBe('session_not_found');
+      expect(failure.message).toMatch(/no session record for "fake-nope"/);
+      expect(tagAlive(tag)).toBe(false);
     } finally {
       await close();
     }

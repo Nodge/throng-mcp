@@ -1,14 +1,14 @@
-import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { createProgress, type ProgressNotification } from '../src/mcp/progress.ts';
+import { describe, expect, it } from 'vitest';
+import { createProgress, type ProgressNotification } from './progress.ts';
 
 function fakeExtra(token: string | number | undefined, fail = false) {
   const sent: ProgressNotification['params'][] = [];
   const extra = {
     ...(token === undefined ? {} : { _meta: { progressToken: token } }),
-    sendNotification: async (n: ProgressNotification) => {
-      if (fail) throw new Error('transport closed');
+    sendNotification: (n: ProgressNotification): Promise<void> => {
+      if (fail) return Promise.reject(new Error('transport closed'));
       sent.push(n.params);
+      return Promise.resolve();
     },
   };
   return { extra, sent };
@@ -27,7 +27,7 @@ describe('progress', () => {
     await sleep(20);
     p.done();
     await p.idle();
-    assert.deepEqual(sent, []);
+    expect(sent).toStrictEqual([]);
   });
 
   it('tool titles and queued position, with a monotonic counter and no total', async () => {
@@ -38,7 +38,7 @@ describe('progress', () => {
     p.tool('edit src/a.ts');
     p.done();
     await p.idle();
-    assert.deepEqual(sent, [
+    expect(sent).toStrictEqual([
       { progressToken: 'tok', progress: 1, message: 'queued (3)' },
       { progressToken: 'tok', progress: 2, message: 'read README.md' },
       { progressToken: 'tok', progress: 3, message: 'edit src/a.ts' },
@@ -52,12 +52,12 @@ describe('progress', () => {
     await sleep(10);
     p.text(12);
     await p.idle();
-    assert.deepEqual(sent.map((s) => s.message), ['agent is writing… (5 chars)']);
+    expect(sent.map((s) => s.message)).toStrictEqual(['agent is writing… (5 chars)']);
     await sleep(50);
     p.text(40);
     p.done();
     await p.idle();
-    assert.deepEqual(sent.map((s) => s.message), ['agent is writing… (5 chars)', 'agent is writing… (40 chars)']);
+    expect(sent.map((s) => s.message)).toStrictEqual(['agent is writing… (5 chars)', 'agent is writing… (40 chars)']);
   });
 
   it('heartbeat reports elapsed time until done()', async () => {
@@ -68,13 +68,13 @@ describe('progress', () => {
     p.done();
     await p.idle();
     const count = sent.length;
-    assert.ok(count >= 2, `expected heartbeats, got ${count}`);
-    for (const s of sent) assert.match(s.message ?? '', /^running \dm\d\ds$/);
+    expect(count, `expected heartbeats, got ${count}`).toBeGreaterThanOrEqual(2);
+    for (const s of sent) expect(s.message ?? '').toMatch(/^running \dm\d\ds$/);
     await sleep(80);
-    assert.equal(sent.length, count, 'heartbeat kept going after done()');
+    expect(sent.length, 'heartbeat kept going after done()').toBe(count);
     p.tool('late');
     await p.idle();
-    assert.equal(sent.length, count, 'sent after done()');
+    expect(sent.length, 'sent after done()').toBe(count);
   });
 
   it('a failing send does not throw', async () => {

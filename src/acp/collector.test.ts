@@ -1,7 +1,6 @@
-import assert from 'node:assert/strict';
 import type { PromptResponse, SessionNotification, SessionUpdate } from '@agentclientprotocol/sdk';
-import { describe, it } from 'node:test';
-import { Collector } from '../src/acp/collector.ts';
+import { describe, expect, it } from 'vitest';
+import { Collector } from './collector.ts';
 
 const note = (update: SessionUpdate): SessionNotification => ({ sessionId: 's1', update });
 const text = (chunk: string): SessionNotification =>
@@ -18,12 +17,12 @@ describe('collector', () => {
     c.handle(text('first '));
     c.handle(text('turn'));
     c.endTurn(stop());
-    assert.equal(c.text, 'first turn');
+    expect(c.text).toBe('first turn');
     c.startTurn();
-    assert.equal(c.text, '');
+    expect(c.text).toBe('');
     c.handle(text('second'));
     c.endTurn(stop());
-    assert.equal(c.text, 'second');
+    expect(c.text).toBe('second');
   });
 
   it('agent text before the turn becomes a warning, not text', () => {
@@ -32,18 +31,18 @@ describe('collector', () => {
     c.startTurn();
     c.handle(text('done'));
     c.endTurn(stop());
-    assert.equal(c.text, 'done');
-    assert.deepEqual(c.warnings, ['agent message before the task: Auto mode unavailable; using Accept edits instead.']);
+    expect(c.text).toBe('done');
+    expect(c.warnings).toStrictEqual(['agent message before the task: Auto mode unavailable; using Accept edits instead.']);
     // Text of a finished turn is not re-reported by the next startTurn.
     c.startTurn();
-    assert.equal(c.warnings.length, 1);
+    expect(c.warnings.length).toBe(1);
   });
 
   it('non-text message chunks are ignored for text', () => {
     const c = new Collector();
     c.startTurn();
     c.handle(note({ sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: 'AA==', mimeType: 'image/png' } }));
-    assert.equal(c.text, '');
+    expect(c.text).toBe('');
   });
 
   it('cost: last value wins; tokens: summed across turns', () => {
@@ -54,11 +53,11 @@ describe('collector', () => {
     c.handle(note({ sessionUpdate: 'usage_update', used: 3, size: 10 }));
     c.endTurn(stop(7, 2));
     c.endTurn(stop());
-    assert.deepEqual(c.usage, { cost_usd: 0.03, input_tokens: 17, output_tokens: 7 });
+    expect(c.usage).toStrictEqual({ cost_usd: 0.03, input_tokens: 17, output_tokens: 7 });
   });
 
   it('usage is empty until something reports it', () => {
-    assert.deepEqual(new Collector().usage, {});
+    expect(new Collector().usage).toStrictEqual({});
   });
 
   it('notice → warnings, exact duplicates dropped', () => {
@@ -66,7 +65,7 @@ describe('collector', () => {
     c.handle(note({ sessionUpdate: 'notice', severity: 'warning', title: 'fell back', description: 'to default model' }));
     c.handle(note({ sessionUpdate: 'notice', severity: 'info', title: 'no description' }));
     c.handle(note({ sessionUpdate: 'notice', severity: 'warning', title: 'fell back', description: 'to default model' }));
-    assert.deepEqual(c.warnings, ['warning: fell back — to default model', 'info: no description']);
+    expect(c.warnings).toStrictEqual(['warning: fell back — to default model', 'info: no description']);
   });
 
   it('thought and plan are ignored', () => {
@@ -75,18 +74,18 @@ describe('collector', () => {
     c.handle(note({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'hmm' } }));
     c.handle(note({ sessionUpdate: 'plan', entries: [{ content: 'step', priority: 'high', status: 'pending' }] }));
     c.endTurn(stop());
-    assert.equal(c.text, '');
-    assert.deepEqual(c.warnings, []);
+    expect(c.text).toBe('');
+    expect(c.warnings).toStrictEqual([]);
   });
 
   it('lastToolTitle follows tool_call and titled tool_call_update', () => {
     const c = new Collector();
-    assert.equal(c.lastToolTitle, undefined);
+    expect(c.lastToolTitle).toBe(undefined);
     c.handle(note({ sessionUpdate: 'tool_call', toolCallId: 't1', title: 'read a.txt' }));
-    assert.equal(c.lastToolTitle, 'read a.txt');
+    expect(c.lastToolTitle).toBe('read a.txt');
     c.handle(note({ sessionUpdate: 'tool_call_update', toolCallId: 't1', status: 'completed' }));
-    assert.equal(c.lastToolTitle, 'read a.txt');
+    expect(c.lastToolTitle).toBe('read a.txt');
     c.handle(note({ sessionUpdate: 'tool_call_update', toolCallId: 't1', title: 'read b.txt' }));
-    assert.equal(c.lastToolTitle, 'read b.txt');
+    expect(c.lastToolTitle).toBe('read b.txt');
   });
 });

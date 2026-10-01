@@ -1,17 +1,16 @@
-import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import type { SessionConfigOption } from '@agentclientprotocol/sdk';
-import { after, describe, it } from 'node:test';
-import { Collector } from '../src/acp/collector.ts';
-import type { Worker } from '../src/acp/types.ts';
-import { startWorker } from '../src/acp/worker.ts';
-import { ThrongError } from '../src/contract.ts';
-import { HARNESSES } from '../src/harnesses/index.ts';
-import { modelRejectedMessage, optionByCategory, selectEffort, selectModel } from '../src/harnesses/select.ts';
-import { type FakeScenario, fakeAgentSpawn } from './fake-agent/index.ts';
+import { afterAll, describe, expect, it } from 'vitest';
+import { type FakeScenario, fakeAgentSpawn } from '../../test/fake-agent/index.ts';
+import { Collector } from '../acp/collector.ts';
+import type { Worker } from '../acp/types.ts';
+import { startWorker } from '../acp/worker.ts';
+import { ThrongError } from '../contract.ts';
+import { HARNESSES } from './index.ts';
+import { modelRejectedMessage, optionByCategory, selectEffort, selectModel } from './select.ts';
 
 const tags: string[] = [];
-after(() => {
+afterAll(() => {
   for (const tag of tags) {
     try {
       execFileSync('pkill', ['-9', '-f', tag]);
@@ -39,7 +38,7 @@ async function withWorker(scenario: FakeScenario, body: (worker: Worker, turn: (
   const worker = await startWorker(
     { command: spawn.command, args: spawn.args, env: spawn.env, cwd, depth: 0 },
     { kind: 'new', cwd, mcpServers: [] },
-    { onUpdate: (n) => collector.handle(n), onPermission: async () => ({ outcome: { outcome: 'cancelled' } }) },
+    { onUpdate: (n) => collector.handle(n), onPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }) },
     { handshakeMs: 5000, exitGraceMs: 300 },
   );
   const turn = async (text: string) => {
@@ -51,7 +50,7 @@ async function withWorker(scenario: FakeScenario, body: (worker: Worker, turn: (
     await body(worker, turn);
   } finally {
     await worker.close();
-    assert.equal(isAlive(worker.pid), false, 'adapter pid is gone after close');
+    expect(isAlive(worker.pid), 'adapter pid is gone after close').toBe(false);
   }
 }
 
@@ -59,11 +58,12 @@ async function rejectsWith(promise: Promise<unknown>, code: string): Promise<Thr
   try {
     await promise;
   } catch (err) {
-    assert.ok(err instanceof ThrongError, `expected ThrongError, got ${String(err)}`);
-    assert.equal(err.code, code, err.message);
-    return err;
+    expect(err, `expected ThrongError, got ${String(err)}`).toBeInstanceOf(ThrongError);
+    const throngErr = err as ThrongError;
+    expect(throngErr.code, throngErr.message).toBe(code);
+    return throngErr;
   }
-  assert.fail(`expected rejection with ${code}`);
+  expect.unreachable(`expected rejection with ${code}`);
 }
 
 describe('optionByCategory', () => {
@@ -84,16 +84,16 @@ describe('optionByCategory', () => {
   ];
 
   it('matches on category, flattens groups, ignores non-select options', () => {
-    assert.deepEqual(optionByCategory(options, 'model'), { id: 'model_choice', values: ['a/x', 'a/y', 'b/z'] });
-    assert.equal(optionByCategory(options, 'thought_level'), undefined);
-    assert.equal(optionByCategory(undefined, 'model'), undefined);
+    expect(optionByCategory(options, 'model')).toStrictEqual({ id: 'model_choice', values: ['a/x', 'a/y', 'b/z'] });
+    expect(optionByCategory(options, 'thought_level')).toBe(undefined);
+    expect(optionByCategory(undefined, 'model')).toBe(undefined);
   });
 });
 
 describe('modelRejectedMessage', () => {
   it('lists every value when the list is short', () => {
     const message = modelRejectedMessage('nope', ['a', 'b']);
-    assert.equal(message, 'model "nope" is not available; valid models: a, b');
+    expect(message).toBe('model "nope" is not available; valid models: a, b');
   });
 
   it('long list: only the requested provider plus the total', () => {
@@ -103,23 +103,22 @@ describe('modelRejectedMessage', () => {
       'anthropic/opus',
     ];
     const message = modelRejectedMessage('anthropic/nope', values);
-    assert.equal(
-      message,
+    expect(message).toBe(
       'model "anthropic/nope" is not available; anthropic/ models: anthropic/fable, anthropic/opus … 42 models in total; run list_harnesses for the full list',
     );
-    assert.ok(!message.includes('openai/'), message);
+    expect(message, message).not.toContain('openai/');
 
     const noProvider = modelRejectedMessage('mystery/x', values);
-    assert.ok(noProvider.includes('no mystery/ models'), noProvider);
-    assert.ok(noProvider.includes('42 models in total'), noProvider);
+    expect(noProvider, noProvider).toContain('no mystery/ models');
+    expect(noProvider, noProvider).toContain('42 models in total');
 
     const noSlash = modelRejectedMessage('plain', values);
-    assert.equal(noSlash, 'model "plain" is not available; … 42 models in total; run list_harnesses for the full list');
+    expect(noSlash).toBe('model "plain" is not available; … 42 models in total; run list_harnesses for the full list');
   });
 
   it('exactly 40 values are still listed in full', () => {
     const values = Array.from({ length: 40 }, (_, i) => `p/m${i}`);
-    assert.ok(modelRejectedMessage('q/x', values).includes('p/m39'));
+    expect(modelRejectedMessage('q/x', values)).toContain('p/m39');
   });
 });
 
@@ -127,41 +126,41 @@ describe('selectModel / selectEffort (fake agent)', () => {
   it('selectModel sets an offered model', async () => {
     await withWorker('echo', async (worker, turn) => {
       await selectModel(worker, 'fake-large');
-      assert.equal(await turn('hi'), 'echo: hi [model=fake-large effort=low]');
+      expect(await turn('hi')).toBe('echo: hi [model=fake-large effort=low]');
     });
   });
 
   it('selectModel rejects an unknown model with the valid list', async () => {
     await withWorker('echo', async (worker, turn) => {
       const err = await rejectsWith(selectModel(worker, 'nope'), 'model_rejected');
-      assert.ok(err.message.includes('"nope"'), err.message);
-      assert.ok(err.message.includes('fake-small'), err.message);
-      assert.ok(err.message.includes('fake-large'), err.message);
-      assert.equal(await turn('hi'), 'echo: hi [model=fake-small effort=low]');
+      expect(err.message, err.message).toContain('"nope"');
+      expect(err.message, err.message).toContain('fake-small');
+      expect(err.message, err.message).toContain('fake-large');
+      expect(await turn('hi')).toBe('echo: hi [model=fake-small effort=low]');
     });
   });
 
   it('selectEffort sets an exact level without a warning', async () => {
     await withWorker('echo', async (worker, turn) => {
-      assert.equal(await selectEffort(HARNESSES.claude, worker, 'high'), undefined);
-      assert.equal(await turn('hi'), 'echo: hi [model=fake-small effort=high]');
+      expect(await selectEffort(HARNESSES.claude, worker, 'high')).toBe(undefined);
+      expect(await turn('hi')).toBe('echo: hi [model=fake-small effort=high]');
     });
   });
 
   it('selectEffort warns when the level is not offered', async () => {
     await withWorker('echo', async (worker, turn) => {
       const claude = await selectEffort(HARNESSES.claude, worker, 'max');
-      assert.equal(claude, 'effort "max" not available for claude; options: low, high');
+      expect(claude).toBe('effort "max" not available for claude; options: low, high');
       const codex = await selectEffort(HARNESSES.codex, worker, 'max');
-      assert.equal(codex, 'effort "max" not available for codex; options: low, high');
-      assert.equal(await turn('hi'), 'echo: hi [model=fake-small effort=low]');
+      expect(codex).toBe('effort "max" not available for codex; options: low, high');
+      expect(await turn('hi')).toBe('echo: hi [model=fake-small effort=low]');
     });
   });
 
   it('selectEffort warns when the harness has no effort option', async () => {
     await withWorker('no-effort-option', async (worker) => {
       const warning = await selectEffort(HARNESSES.opencode, worker, 'high');
-      assert.equal(warning, 'effort "high" ignored: opencode exposes no effort option');
+      expect(warning).toBe('effort "high" ignored: opencode exposes no effort option');
     });
   });
 
@@ -169,8 +168,8 @@ describe('selectModel / selectEffort (fake agent)', () => {
     await withWorker('echo', async (worker, turn) => {
       // A definition whose mapping differs from the requested level: max → high.
       const def = { ...HARNESSES.codex, mapEffort: (level: string, options: string[]) => (level === 'max' && options.includes('high') ? 'high' : undefined) };
-      assert.equal(await selectEffort(def, worker, 'max'), 'effort "max" mapped to "high"');
-      assert.equal(await turn('hi'), 'echo: hi [model=fake-small effort=high]');
+      expect(await selectEffort(def, worker, 'max')).toBe('effort "max" mapped to "high"');
+      expect(await turn('hi')).toBe('echo: hi [model=fake-small effort=high]');
     });
   });
 });

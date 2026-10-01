@@ -1,25 +1,24 @@
-import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { after, describe, it } from 'node:test';
-import { loadConfig, type LoadedConfig } from '../src/config.ts';
-import type { RunFailure, RunSuccess } from '../src/contract.ts';
-import { createProgress, type ProgressNotification } from '../src/mcp/progress.ts';
-import { noProgress, type Progress } from '../src/progress.ts';
-import { EXECUTOR_PREFIX } from '../src/prompt.ts';
-import { resumeThronglet } from '../src/mcp/tools/resume-thronglet.ts';
-import { runThronglet } from '../src/mcp/tools/run-thronglet.ts';
-import type { RunContext, RunOutcome } from '../src/run.ts';
-import { Semaphore } from '../src/semaphore.ts';
-import { type SessionRecord, writeSessionRecord } from '../src/sessions.ts';
-import type { FakeScenario } from './fake-agent/index.ts';
+import { afterAll, describe, expect, it } from 'vitest';
+import { loadConfig, type LoadedConfig } from './config.ts';
+import type { RunFailure, RunSuccess } from './contract.ts';
+import { createProgress, type ProgressNotification } from './mcp/progress.ts';
+import { noProgress, type Progress } from './progress.ts';
+import { EXECUTOR_PREFIX } from './prompt.ts';
+import { resumeThronglet } from './mcp/tools/resume-thronglet.ts';
+import { runThronglet } from './mcp/tools/run-thronglet.ts';
+import type { RunContext, RunOutcome } from './run.ts';
+import { Semaphore } from './semaphore.ts';
+import { type SessionRecord, writeSessionRecord } from './sessions.ts';
+import type { FakeScenario } from '../test/fake-agent/index.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'throng-run-'));
-const fakeAgent = fileURLToPath(new URL('./fake-agent/agent.ts', import.meta.url));
+const fakeAgent = fileURLToPath(new URL('../test/fake-agent/agent.ts', import.meta.url));
 // PATH for the adapter lookup: only `node`, so no real adapter or harness binary is ever found.
 const bin = join(root, 'bin');
 mkdirSync(bin);
@@ -29,7 +28,7 @@ const work = join(root, 'work');
 mkdirSync(work);
 
 const tags: string[] = [];
-after(() => {
+afterAll(() => {
   for (const tag of tags) {
     try {
       execFileSync('pkill', ['-9', '-f', tag]);
@@ -52,7 +51,7 @@ function tagAlive(tag: string): boolean {
 async function waitFor(what: string, check: () => boolean, ms = 3000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!check()) {
-    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    if (Date.now() > deadline) expect.unreachable(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
@@ -78,7 +77,7 @@ function fakeClaude(scenario: FakeScenario, extra = '', agentEnv: Record<string,
       '',
     ].join('\n'),
   );
-  assert.equal(loaded.error, undefined, loaded.error);
+  expect(loaded.error, loaded.error).toBe(undefined);
   return { loaded, tag };
 }
 
@@ -98,15 +97,15 @@ function makeCtx(loaded: LoadedConfig, overrides: Partial<RunContext> = {}): Run
 }
 
 function ok(outcome: RunOutcome): RunSuccess {
-  assert.equal(outcome.ok, true, `expected success, got ${JSON.stringify(outcome.payload)}`);
+  expect(outcome.ok, `expected success, got ${JSON.stringify(outcome.payload)}`).toBe(true);
   return outcome.payload as RunSuccess;
 }
 
 function failed(outcome: RunOutcome, code: RunFailure['code']): RunFailure {
-  assert.equal(outcome.ok, false, `expected failure, got ${JSON.stringify(outcome.payload)}`);
+  expect(outcome.ok, `expected failure, got ${JSON.stringify(outcome.payload)}`).toBe(false);
   const payload = outcome.payload as RunFailure;
-  assert.equal(payload.code, code, payload.message);
-  assert.equal(typeof payload.duration_s, 'number');
+  expect(payload.code, payload.message).toBe(code);
+  expect(typeof payload.duration_s).toBe('number');
   return payload;
 }
 
@@ -134,79 +133,79 @@ describe('runThronglet', () => {
     const { loaded, tag } = fakeClaude('echo');
     const ctx = makeCtx(loaded);
     const payload = ok(await runThronglet(input('claude/fake-small'), ctx));
-    assert.ok(payload.text?.startsWith('echo: '), payload.text);
-    assert.ok(payload.text?.includes('do the thing'));
+    expect(payload.text?.startsWith('echo: '), payload.text).toBe(true);
+    expect(payload.text?.includes('do the thing')).toBe(true);
     const firstSentence = EXECUTOR_PREFIX.slice(0, EXECUTOR_PREFIX.indexOf('.') + 1);
-    assert.ok(payload.text?.includes(firstSentence), 'executor prefix missing');
-    assert.match(payload.text ?? '', /\[model=fake-small effort=low\]$/);
-    assert.equal(payload.stop_reason, 'end_turn');
-    assert.deepEqual(payload.usage, { input_tokens: 10, output_tokens: 5, cost_usd: 0.01 });
-    assert.equal(typeof payload.duration_s, 'number');
-    assert.equal(payload.warnings, undefined);
-    assert.ok(payload.session_id.startsWith('fake-'));
-    assert.equal(tagAlive(tag), false, 'adapter still running');
+    expect(payload.text?.includes(firstSentence), 'executor prefix missing').toBe(true);
+    expect(payload.text ?? '').toMatch(/\[model=fake-small effort=low\]$/);
+    expect(payload.stop_reason).toBe('end_turn');
+    expect(payload.usage).toStrictEqual({ input_tokens: 10, output_tokens: 5, cost_usd: 0.01 });
+    expect(typeof payload.duration_s).toBe('number');
+    expect(payload.warnings).toBe(undefined);
+    expect(payload.session_id.startsWith('fake-')).toBe(true);
+    expect(tagAlive(tag), 'adapter still running').toBe(false);
 
-    const record = JSON.parse(readFileSync(join(ctx.cacheDir, 'sessions', `${payload.session_id}.json`), 'utf8'));
-    assert.equal(record.harness, 'claude');
-    assert.equal(record.model, 'fake-small');
-    assert.equal(record.cwd, work);
-    assert.equal(record.effort, undefined);
-    assert.ok(Date.parse(record.created_at) <= Date.parse(record.last_used_at));
+    const record = JSON.parse(readFileSync(join(ctx.cacheDir, 'sessions', `${payload.session_id}.json`), 'utf8')) as SessionRecord;
+    expect(record.harness).toBe('claude');
+    expect(record.model).toBe('fake-small');
+    expect(record.cwd).toBe(work);
+    expect(record.effort).toBe(undefined);
+    expect(Date.parse(record.created_at) <= Date.parse(record.last_used_at)).toBe(true);
   });
 
   it('model and effort from the agent spec', async () => {
     const { loaded } = fakeClaude('echo');
     const large = ok(await runThronglet(input('claude/fake-large:high'), makeCtx(loaded)));
-    assert.match(large.text ?? '', /\[model=fake-large effort=high\]$/);
+    expect(large.text ?? '').toMatch(/\[model=fake-large effort=high\]$/);
 
     const max = ok(await runThronglet(input('claude/fake-small:max'), makeCtx(loaded)));
-    assert.ok(max.warnings?.some((w) => w.includes('"max"')), JSON.stringify(max.warnings));
+    expect(max.warnings?.some((w) => w.includes('"max"')), JSON.stringify(max.warnings)).toBe(true);
 
     const nope = failed(await runThronglet(input('claude/nope'), makeCtx(loaded)), 'model_rejected');
-    assert.match(nope.message, /fake-small, fake-large/);
-    assert.ok(nope.session_id?.startsWith('fake-'));
+    expect(nope.message).toMatch(/fake-small, fake-large/);
+    expect(nope.session_id?.startsWith('fake-')).toBe(true);
   });
 
   it('schema is accepted and ignored with a warning', async () => {
     const { loaded } = fakeClaude('echo');
     const payload = ok(await runThronglet(input('claude/fake-small', { schema: { type: 'object' } }), makeCtx(loaded)));
-    assert.deepEqual(payload.warnings, ['schema is not supported yet (v2); ignored']);
+    expect(payload.warnings).toStrictEqual(['schema is not supported yet (v2); ignored']);
   });
 
   it('unknown harness → harness_unavailable', async () => {
     const { loaded } = fakeClaude('echo');
     const payload = failed(await runThronglet(input('gemini/x'), makeCtx(loaded)), 'harness_unavailable');
-    assert.equal(payload.session_id, undefined);
+    expect(payload.session_id).toBe(undefined);
   });
 
   it('adapter missing → harness_unavailable with the install hint, before spawn', async () => {
     const payload = failed(await runThronglet(input('claude/opus'), makeCtx(loadYaml(''))), 'harness_unavailable');
-    assert.match(payload.message, /claude-agent-acp not found on PATH; install: npm i -g @agentclientprotocol\/claude-agent-acp/);
+    expect(payload.message).toMatch(/claude-agent-acp not found on PATH; install: npm i -g @agentclientprotocol\/claude-agent-acp/);
   });
 
   it('depth guard', async () => {
     const { loaded, tag } = fakeClaude('echo', 'limits: { max_depth: 2 }');
     const payload = failed(await runThronglet(input('claude/fake-small'), makeCtx(loaded, { depth: 2 })), 'depth_exceeded');
-    assert.match(payload.message, /depth 3.*max_depth is 2/);
-    assert.equal(tagAlive(tag), false);
+    expect(payload.message).toMatch(/depth 3.*max_depth is 2/);
+    expect(tagAlive(tag)).toBe(false);
   });
 
   it('config error and unsupported policy refuse to run', async () => {
     const broken = failed(await runThronglet(input('claude/fake-small'), makeCtx(loadYaml('limits: [\n'))), 'harness_unavailable');
-    assert.ok(broken.message.startsWith('config error:'), broken.message);
+    expect(broken.message.startsWith('config error:'), broken.message).toBe(true);
 
     const { loaded } = fakeClaude('echo', 'permissions: deny_all');
     const policy = failed(await runThronglet(input('claude/fake-small'), makeCtx(loaded)), 'harness_unavailable');
-    assert.match(policy.message, /permissions "deny_all" is not supported yet/);
+    expect(policy.message).toMatch(/permissions "deny_all" is not supported yet/);
   });
 
   it('timeout → timeout with session_id, adapter gone', async () => {
     const { loaded, tag } = fakeClaude('hang');
     const started = Date.now();
     const payload = failed(await runThronglet(input('claude/fake-small', { timeout_s: 1 }), makeCtx(loaded)), 'timeout');
-    assert.ok(Date.now() - started < 2500, `took ${Date.now() - started} ms`);
-    assert.ok(payload.session_id);
-    assert.equal(tagAlive(tag), false, 'adapter still running');
+    expect(Date.now() - started < 2500, `took ${Date.now() - started} ms`).toBe(true);
+    expect(payload.session_id).toBeTruthy();
+    expect(tagAlive(tag), 'adapter still running').toBe(false);
   });
 
   it('client cancel → cancelled, adapter gone', async () => {
@@ -214,46 +213,46 @@ describe('runThronglet', () => {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 200);
     const payload = failed(await runThronglet(input('claude/fake-small'), makeCtx(loaded, { signal: controller.signal })), 'cancelled');
-    assert.ok(payload.session_id);
-    assert.deepEqual(payload.usage, {}, 'cancelled turn without usage');
-    assert.equal(tagAlive(tag), false, 'adapter still running');
+    expect(payload.session_id).toBeTruthy();
+    expect(payload.usage, 'cancelled turn without usage').toStrictEqual({});
+    expect(tagAlive(tag), 'adapter still running').toBe(false);
   });
 
   it('adapter crash mid-prompt → transport_lost with stderr', async () => {
     const { loaded, tag } = fakeClaude('crash-on-prompt');
     const payload = failed(await runThronglet(input('claude/fake-small'), makeCtx(loaded)), 'transport_lost');
-    assert.match(payload.message, /boom/);
-    assert.ok(payload.session_id);
-    assert.equal(tagAlive(tag), false);
+    expect(payload.message).toMatch(/boom/);
+    expect(payload.session_id).toBeTruthy();
+    expect(tagAlive(tag)).toBe(false);
   });
 
   it('stop reasons: empty_result, refusal, max_turn_requests', async () => {
     const empty = failed(await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('empty').loaded)), 'empty_result');
-    assert.ok(empty.session_id);
-    assert.deepEqual(empty.usage, { input_tokens: 10, output_tokens: 5 });
+    expect(empty.session_id).toBeTruthy();
+    expect(empty.usage).toStrictEqual({ input_tokens: 10, output_tokens: 5 });
 
     const refusal = failed(await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('refuse').loaded)), 'refusal');
-    assert.equal(refusal.text, 'I will not do that.');
+    expect(refusal.text).toBe('I will not do that.');
 
     const maxTurns = ok(await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('max-turns').loaded)));
-    assert.equal(maxTurns.stop_reason, 'max_turn_requests');
-    assert.ok(maxTurns.text?.startsWith('echo: '));
+    expect(maxTurns.stop_reason).toBe('max_turn_requests');
+    expect(maxTurns.text?.startsWith('echo: ')).toBe(true);
   });
 
   it('adapter notices become warnings', async () => {
     const payload = ok(await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('notice').loaded)));
-    assert.deepEqual(payload.warnings, ['warning: fake notice — mode fell back']);
+    expect(payload.warnings).toStrictEqual(['warning: fake notice — mode fell back']);
   });
 
   it('auto: a request_permission the harness still raises is rejected', async () => {
     const payload = ok(await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('permission').loaded)));
-    assert.equal(payload.text, 'rejected');
+    expect(payload.text).toBe('rejected');
   });
 
   it('a permission-mode fallback announced by the agent lands in warnings, not in text', async () => {
     const payload = ok(await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('mode-fallback').loaded)));
-    assert.ok(payload.text?.startsWith('echo: '), payload.text);
-    assert.deepEqual(payload.warnings, [
+    expect(payload.text?.startsWith('echo: '), payload.text).toBe(true);
+    expect(payload.warnings).toStrictEqual([
       'permission mode "auto" not applied: the agent switched to "ask"',
       'agent message before the task: Auto mode unavailable; using Ask instead.',
     ]);
@@ -272,16 +271,16 @@ describe('runThronglet', () => {
       makeCtx(loaded, { semaphore, signal: second.signal, progress: secondProgress }),
     );
     await waitFor('first session', () => readdirSync(firstCtx.cacheDir).includes('sessions'));
-    assert.deepEqual(secondProgress.calls, ['queued 1']);
-    assert.equal(semaphore.waiting, 1);
+    expect(secondProgress.calls).toStrictEqual(['queued 1']);
+    expect(semaphore.waiting).toBe(1);
     second.abort();
     const queuedPayload = failed(await queued, 'cancelled');
-    assert.equal(queuedPayload.session_id, undefined);
-    assert.deepEqual(secondProgress.calls, ['queued 1', 'done']);
+    expect(queuedPayload.session_id).toBe(undefined);
+    expect(secondProgress.calls).toStrictEqual(['queued 1', 'done']);
     first.abort();
     failed(await running, 'cancelled');
-    assert.equal(tagAlive(tag), false);
-    assert.equal(semaphore.waiting, 0);
+    expect(tagAlive(tag)).toBe(false);
+    expect(semaphore.waiting).toBe(0);
     (await semaphore.acquire())();
   });
 
@@ -294,31 +293,34 @@ describe('runThronglet', () => {
     const started = Date.now();
     controller.abort();
     const payload = failed(await call, 'cancelled');
-    assert.ok(Date.now() - started < 500, `took ${Date.now() - started} ms`);
-    assert.equal(payload.session_id, undefined);
+    expect(Date.now() - started < 500, `took ${Date.now() - started} ms`).toBe(true);
+    expect(payload.session_id).toBe(undefined);
     let granted = false;
     const next = semaphore.acquire().then((release) => ((granted = true), release));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(granted, false, 'slot released while the adapter was still up');
+    expect(granted, 'slot released while the adapter was still up').toBe(false);
     (await next)();
-    assert.equal(tagAlive(tag), false, 'adapter still running');
+    expect(tagAlive(tag), 'adapter still running').toBe(false);
   });
 
   it('missing cwd → spawn_failed before spawn', async () => {
     const { loaded } = fakeClaude('echo');
     const payload = failed(await runThronglet(input('claude/fake-small', { cwd: join(root, 'nope') }), makeCtx(loaded)), 'spawn_failed');
-    assert.match(payload.message, /cwd does not exist or is not a directory/);
+    expect(payload.message).toMatch(/cwd does not exist or is not a directory/);
   });
 
   it('progress: tool titles and text on echo, heartbeat on a long run', async () => {
     const sent: string[] = [];
     const extra = {
       _meta: { progressToken: 'p' },
-      sendNotification: async (n: ProgressNotification) => void sent.push(n.params.message ?? ''),
+      sendNotification: (n: ProgressNotification) => {
+        sent.push(n.params.message ?? '');
+        return Promise.resolve();
+      },
     };
     ok(await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('echo').loaded, { progress: createProgress(extra) })));
-    assert.ok(sent.includes('read README.md'), JSON.stringify(sent));
-    assert.ok(sent.some((m) => m.startsWith('agent is writing…')), JSON.stringify(sent));
+    expect(sent.includes('read README.md'), JSON.stringify(sent)).toBe(true);
+    expect(sent.some((m) => m.startsWith('agent is writing…')), JSON.stringify(sent)).toBe(true);
 
     sent.length = 0;
     const controller = new AbortController();
@@ -328,7 +330,7 @@ describe('runThronglet', () => {
       await runThronglet(input('claude/fake-small'), makeCtx(fakeClaude('hang').loaded, { progress, signal: controller.signal })),
       'cancelled',
     );
-    assert.ok(sent.some((m) => /^running 0m0\ds$/.test(m)), JSON.stringify(sent));
+    expect(sent.some((m) => /^running 0m0\ds$/.test(m)), JSON.stringify(sent)).toBe(true);
   });
 });
 
@@ -344,35 +346,35 @@ describe('resumeThronglet', () => {
     const { loaded, tag } = fakeClaude('resume-memory', '', { FAKE_MEMORY_DIR: mkdtempSync(join(root, 'memory-')) });
     const ctx = makeCtx(loaded);
     const first = ok(await runThronglet(input('claude/fake-large:high', { prompt: 'remember: banana' }), ctx));
-    assert.equal(first.text, 'noted [model=fake-large effort=high]');
+    expect(first.text).toBe('noted [model=fake-large effort=high]');
     const recordPath = join(ctx.cacheDir, 'sessions', `${first.session_id}.json`);
-    const before = JSON.parse(readFileSync(recordPath, 'utf8'));
+    const before = JSON.parse(readFileSync(recordPath, 'utf8')) as SessionRecord;
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     const second = ok(await resumeThronglet({ session_id: first.session_id, prompt: 'what did I say?' }, ctx));
-    assert.equal(second.session_id, first.session_id);
-    assert.equal(second.text, 'you said: remember: banana [model=fake-large effort=high]');
-    assert.equal(second.stop_reason, 'end_turn');
-    assert.deepEqual(second.usage, { input_tokens: 10, output_tokens: 5, cost_usd: 0.01 });
-    assert.equal(second.warnings, undefined);
-    assert.equal(tagAlive(tag), false, 'adapter still running');
+    expect(second.session_id).toBe(first.session_id);
+    expect(second.text).toBe('you said: remember: banana [model=fake-large effort=high]');
+    expect(second.stop_reason).toBe('end_turn');
+    expect(second.usage).toStrictEqual({ input_tokens: 10, output_tokens: 5, cost_usd: 0.01 });
+    expect(second.warnings).toBe(undefined);
+    expect(tagAlive(tag), 'adapter still running').toBe(false);
 
-    const after = JSON.parse(readFileSync(recordPath, 'utf8'));
-    assert.equal(after.created_at, before.created_at);
-    assert.ok(Date.parse(after.last_used_at) > Date.parse(before.last_used_at), `${before.last_used_at} → ${after.last_used_at}`);
-    assert.deepEqual({ ...after, last_used_at: undefined }, { ...before, last_used_at: undefined });
+    const after = JSON.parse(readFileSync(recordPath, 'utf8')) as SessionRecord;
+    expect(after.created_at).toBe(before.created_at);
+    expect(Date.parse(after.last_used_at) > Date.parse(before.last_used_at), `${before.last_used_at} → ${after.last_used_at}`).toBe(true);
+    expect({ ...after, last_used_at: undefined }).toStrictEqual({ ...before, last_used_at: undefined });
   });
 
   it('unknown or unsafe id → session_not_found before spawn', async () => {
     const { loaded, tag } = fakeClaude('resume-memory');
     const ctx = makeCtx(loaded);
     const unknown = failed(await resumeThronglet({ session_id: 'fake-nope', prompt: 'x' }, ctx), 'session_not_found');
-    assert.match(unknown.message, /^no session record for "fake-nope" \(records live 14 days under .*\/sessions\)$/);
-    assert.equal(unknown.session_id, undefined);
+    expect(unknown.message).toMatch(/^no session record for "fake-nope" \(records live 14 days under .*\/sessions\)$/);
+    expect(unknown.session_id).toBe(undefined);
     const unsafe = failed(await resumeThronglet({ session_id: '../etc', prompt: 'x' }, ctx), 'session_not_found');
-    assert.match(unsafe.message, /no session record for "\.\.\/etc"/);
-    assert.equal(tagAlive(tag), false);
-    assert.deepEqual(readdirSync(ctx.cacheDir), [], 'nothing written for a call that never started');
+    expect(unsafe.message).toMatch(/no session record for "\.\.\/etc"/);
+    expect(tagAlive(tag)).toBe(false);
+    expect(readdirSync(ctx.cacheDir), 'nothing written for a call that never started').toStrictEqual([]);
   });
 
   it('corrupt record → session_not_found', async () => {
@@ -381,8 +383,8 @@ describe('resumeThronglet', () => {
     mkdirSync(join(ctx.cacheDir, 'sessions'));
     writeFileSync(join(ctx.cacheDir, 'sessions', 'fake-bad.json'), JSON.stringify({ harness: 'gemini', model: 'x', cwd: work }));
     writeFileSync(join(ctx.cacheDir, 'sessions', 'fake-junk.json'), '{');
-    assert.match(failed(await resumeThronglet({ session_id: 'fake-bad', prompt: 'x' }, ctx), 'session_not_found').message, /corrupt/);
-    assert.match(failed(await resumeThronglet({ session_id: 'fake-junk', prompt: 'x' }, ctx), 'session_not_found').message, /unreadable/);
+    expect(failed(await resumeThronglet({ session_id: 'fake-bad', prompt: 'x' }, ctx), 'session_not_found').message).toMatch(/corrupt/);
+    expect(failed(await resumeThronglet({ session_id: 'fake-junk', prompt: 'x' }, ctx), 'session_not_found').message).toMatch(/unreadable/);
   });
 
   it('harness without resume capability → session_not_found', async () => {
@@ -390,8 +392,8 @@ describe('resumeThronglet', () => {
     const ctx = makeCtx(loaded);
     await record(ctx, 'fake-a');
     const payload = failed(await resumeThronglet({ session_id: 'fake-a', prompt: 'x' }, ctx), 'session_not_found');
-    assert.match(payload.message, /session\/resume/);
-    assert.equal(tagAlive(tag), false);
+    expect(payload.message).toMatch(/session\/resume/);
+    expect(tagAlive(tag)).toBe(false);
   });
 
   it('adapter rejects the id → session_not_found with its message', async () => {
@@ -399,8 +401,8 @@ describe('resumeThronglet', () => {
     const ctx = makeCtx(loaded);
     await record(ctx, 'fake-forgotten');
     const payload = failed(await resumeThronglet({ session_id: 'fake-forgotten', prompt: 'x' }, ctx), 'session_not_found');
-    assert.match(payload.message, /unknown session fake-forgotten/);
-    assert.equal(tagAlive(tag), false);
+    expect(payload.message).toMatch(/unknown session fake-forgotten/);
+    expect(tagAlive(tag)).toBe(false);
   });
 
   it('adapter missing → harness_unavailable; record cwd gone → spawn_failed', async () => {
@@ -408,14 +410,14 @@ describe('resumeThronglet', () => {
     const ctx = makeCtx(loaded);
     await record(ctx, 'codex-a', { harness: 'codex', model: 'gpt' });
     const codex = failed(await resumeThronglet({ session_id: 'codex-a', prompt: 'x' }, ctx), 'harness_unavailable');
-    assert.match(codex.message, /codex-acp not found on PATH; install: npm i -g @agentclientprotocol\/codex-acp/);
+    expect(codex.message).toMatch(/codex-acp not found on PATH; install: npm i -g @agentclientprotocol\/codex-acp/);
 
     const gone = join(root, `gone-${randomUUID()}`);
     mkdirSync(gone);
     await record(ctx, 'fake-gone', { cwd: gone });
     rmSync(gone, { recursive: true });
     const spawn = failed(await resumeThronglet({ session_id: 'fake-gone', prompt: 'x' }, ctx), 'spawn_failed');
-    assert.ok(spawn.message.includes(gone), spawn.message);
+    expect(spawn.message.includes(gone), spawn.message).toBe(true);
   });
 
   it('timeout → timeout with the session_id, adapter gone', async () => {
@@ -424,9 +426,9 @@ describe('resumeThronglet', () => {
     await record(ctx, 'fake-hang');
     const started = Date.now();
     const payload = failed(await resumeThronglet({ session_id: 'fake-hang', prompt: 'x', timeout_s: 1 }, ctx), 'timeout');
-    assert.ok(Date.now() - started < 2500, `took ${Date.now() - started} ms`);
-    assert.equal(payload.session_id, 'fake-hang');
-    assert.equal(tagAlive(tag), false, 'adapter still running');
+    expect(Date.now() - started < 2500, `took ${Date.now() - started} ms`).toBe(true);
+    expect(payload.session_id).toBe('fake-hang');
+    expect(tagAlive(tag), 'adapter still running').toBe(false);
   });
 
   it('the guards of a new run apply: unsupported policy, depth', async () => {
@@ -434,13 +436,13 @@ describe('resumeThronglet', () => {
     const deniedCtx = makeCtx(denied.loaded);
     await record(deniedCtx, 'fake-a');
     const policy = failed(await resumeThronglet({ session_id: 'fake-a', prompt: 'x' }, deniedCtx), 'harness_unavailable');
-    assert.match(policy.message, /permissions "deny_all" is not supported yet/);
+    expect(policy.message).toMatch(/permissions "deny_all" is not supported yet/);
 
     const deep = fakeClaude('echo', 'limits: { max_depth: 2 }');
     const deepCtx = makeCtx(deep.loaded, { depth: 2 });
     await record(deepCtx, 'fake-a');
     failed(await resumeThronglet({ session_id: 'fake-a', prompt: 'x' }, deepCtx), 'depth_exceeded');
-    assert.equal(tagAlive(deep.tag), false);
+    expect(tagAlive(deep.tag)).toBe(false);
   });
 
   it('schema is accepted and ignored with a warning', async () => {
@@ -448,7 +450,7 @@ describe('resumeThronglet', () => {
     const ctx = makeCtx(loaded);
     await record(ctx, 'fake-a');
     const payload = ok(await resumeThronglet({ session_id: 'fake-a', prompt: 'x', schema: { type: 'object' } }, ctx));
-    assert.ok(payload.text?.startsWith('resumed: echo: '), payload.text);
-    assert.deepEqual(payload.warnings, ['schema is not supported yet (v2); ignored']);
+    expect(payload.text?.startsWith('resumed: echo: '), payload.text).toBe(true);
+    expect(payload.warnings).toStrictEqual(['schema is not supported yet (v2); ignored']);
   });
 });

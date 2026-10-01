@@ -72,7 +72,9 @@ function adapterPids(): Set<number> {
       out = execFileSync('pgrep', ['-f', pattern], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     } catch (err) {
       // pgrep exits 1 when nothing matches; anything else (ENOENT, bad pattern) means the check can't run.
-      if ((err as { status?: unknown }).status !== 1) throw new Error(`pgrep failed: ${err instanceof Error ? err.message : String(err)}`);
+      if ((err as { status?: unknown }).status !== 1) {
+        throw new Error(`pgrep failed: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+      }
     }
     for (const line of out.split('\n')) if (line.trim()) pids.add(Number(line.trim()));
   }
@@ -80,7 +82,7 @@ function adapterPids(): Set<number> {
 }
 
 function textOf(result: Record<string, unknown>): string {
-  const content = result.content as Array<{ type: string; text?: string }> | undefined;
+  const content = result.content as { type: string; text?: string }[] | undefined;
   return content?.[0]?.text ?? '';
 }
 

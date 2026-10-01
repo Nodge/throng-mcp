@@ -31,8 +31,11 @@ export class RunLifecycle {
   /** `clientSignal` is the MCP call's `extra.signal`: client cancel or transport close. */
   constructor(clientSignal: AbortSignal) {
     this.#clientSignal = clientSignal;
-    this.#stopped = new Promise<never>((_, reject) => this.#stop.signal.addEventListener('abort', () => reject(this.#stop.signal.reason)));
-    this.#stopped.catch(() => {});
+    // #halt is the only abort and always passes a ThrongError.
+    this.#stopped = new Promise<never>((_, reject) =>
+      this.#stop.signal.addEventListener('abort', () => reject(this.#stop.signal.reason as ThrongError)),
+    );
+    this.#stopped.catch(() => { /* ignored */ });
   }
 
   /** Waits for a slot; `onQueued` fires when the call has to wait. Rejects `cancelled` if the client cancels meanwhile. */
@@ -64,7 +67,7 @@ export class RunLifecycle {
       if (this.#isStop(err)) {
         this.#lingering = starting.then(
           (late) => late.close(),
-          () => {},
+          () => { /* ignored */ },
         );
       }
       throw err;
@@ -73,7 +76,7 @@ export class RunLifecycle {
 
   /** One prompt turn under the race; on cancel or timeout the turn is cancelled (DESIGN §4.2) and gets `graceMs` to settle. */
   async turn(prompting: Promise<PromptResponse>, graceMs: number, hooks: TurnHooks): Promise<PromptResponse> {
-    prompting.catch(() => {});
+    prompting.catch(() => { /* ignored */ });
     try {
       return await this.guard(prompting);
     } catch (err) {
@@ -107,7 +110,7 @@ export class RunLifecycle {
 
 async function cancelTurn(worker: Worker, prompting: Promise<PromptResponse>, graceMs: number, hooks: TurnHooks): Promise<void> {
   hooks.onCancel();
-  await worker.cancel().catch(() => {});
+  await worker.cancel().catch(() => { /* ignored */ });
   let graceTimer: NodeJS.Timeout | undefined;
   const settled = await Promise.race([
     prompting.then(

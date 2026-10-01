@@ -33,14 +33,14 @@ const CANCELLED: Outcome = { outcome: 'cancelled' };
  * `reject_once` picked by kind (ids differ per agent); without one, `cancelled`. Used by `auto` (decision-4):
  * whatever the harness's own auto mode does not approve is refused, so `auto` never widens into allow_all.
  */
-export const decideReject: Decide = async (request) => {
+export const decideReject: Decide = (request) => {
   const option = request.options.find((o) => o.kind === 'reject_once');
-  return option ? { outcome: 'selected', optionId: option.optionId } : CANCELLED;
+  return Promise.resolve(option ? { outcome: 'selected', optionId: option.optionId } : CANCELLED);
 };
 
 function deciderFor(policy: PermissionPolicy): Decide {
   // allow_all / deny_all / elicit arrive in v2; until then anything but `auto` is refused before spawn.
-  return policy === 'auto' ? decideReject : async () => CANCELLED;
+  return policy === 'auto' ? decideReject : () => Promise.resolve(CANCELLED);
 }
 
 export function createPermissionBridge(

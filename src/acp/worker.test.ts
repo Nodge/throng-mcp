@@ -1,12 +1,11 @@
-import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import type { RequestPermissionRequest, RequestPermissionResponse, SessionNotification } from '@agentclientprotocol/sdk';
-import { after, describe, it } from 'node:test';
-import { Collector } from '../src/acp/collector.ts';
-import type { SessionStart, Worker, WorkerHooks, WorkerLimits } from '../src/acp/types.ts';
-import { startWorker } from '../src/acp/worker.ts';
-import { ThrongError } from '../src/contract.ts';
-import { type FakeScenario, fakeAgentSpawn } from './fake-agent/index.ts';
+import { afterAll, describe, expect, it } from 'vitest';
+import { type FakeScenario, fakeAgentSpawn } from '../../test/fake-agent/index.ts';
+import { ThrongError } from '../contract.ts';
+import { Collector } from './collector.ts';
+import type { SessionStart, Worker, WorkerHooks, WorkerLimits } from './types.ts';
+import { startWorker } from './worker.ts';
 
 const cwd = process.cwd();
 const limits: WorkerLimits = { handshakeMs: 5000, exitGraceMs: 300 };
@@ -15,7 +14,7 @@ const newSession: SessionStart = { kind: 'new', cwd, mcpServers: [] };
 // Safety net: whatever a failing test left behind is killed here.
 const tags: string[] = [];
 const grandchildren: number[] = [];
-after(() => {
+afterAll(() => {
   for (const pid of grandchildren) {
     try {
       process.kill(pid, 'SIGKILL');
@@ -53,7 +52,7 @@ function tagAlive(tag: string): boolean {
 async function waitFor(what: string, probe: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!probe()) {
-    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    if (Date.now() > deadline) expect.unreachable(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
@@ -61,8 +60,8 @@ async function waitFor(what: string, probe: () => boolean, timeoutMs = 2000): Pr
 /** Grandchild pid the fake agent printed to stderr (`grandchild pid=N`); registered for cleanup. */
 function grandchildPid(text: string): number {
   const match = /grandchild pid=(\d+)/.exec(text);
-  assert.ok(match?.[1], `no grandchild pid in: ${text}`);
-  const pid = Number(match[1]);
+  expect(match?.[1], `no grandchild pid in: ${text}`).toBeTruthy();
+  const pid = Number(match?.[1]);
   grandchildren.push(pid);
   return pid;
 }
@@ -93,7 +92,7 @@ async function start(
         updates.push(n);
         collector.handle(n);
       },
-      onPermission: options.onPermission ?? (async () => ({ outcome: { outcome: 'cancelled' } })),
+      onPermission: options.onPermission ?? (() => Promise.resolve({ outcome: { outcome: 'cancelled' } })),
       onWarning: (text) => warnings.push(text),
     },
     limits,
@@ -114,7 +113,7 @@ async function start(
 /** Runs `body` with a started worker; always closes it and asserts the adapter is gone. */
 async function withWorker(
   scenario: FakeScenario,
-  body: (h: Harness) => Promise<void>,
+  body: (h: Harness) => void | Promise<void>,
   options?: Parameters<typeof start>[1],
 ): Promise<void> {
   const h = await start(scenario, options);
@@ -122,7 +121,7 @@ async function withWorker(
     await body(h);
   } finally {
     await h.worker.close();
-    assert.equal(isAlive(h.worker.pid), false, 'adapter pid is gone after close');
+    expect(isAlive(h.worker.pid), 'adapter pid is gone after close').toBe(false);
   }
 }
 
@@ -130,29 +129,27 @@ async function rejectsWith(promise: Promise<unknown>, code: string): Promise<Thr
   try {
     await promise;
   } catch (err) {
-    assert.ok(err instanceof ThrongError, `expected ThrongError, got ${String(err)}`);
-    assert.equal(err.code, code, err.message);
-    return err;
+    expect(err, `expected ThrongError, got ${String(err)}`).toBeInstanceOf(ThrongError);
+    const throngErr = err as ThrongError;
+    expect(throngErr.code, throngErr.message).toBe(code);
+    return throngErr;
   }
-  assert.fail(`expected rejection with ${code}`);
+  expect.unreachable(`expected rejection with ${code}`);
 }
 
 describe('worker', () => {
   it('handshake exposes session, agent info, config options and modes', async () => {
-    await withWorker('echo', async ({ worker }) => {
+    await withWorker('echo', ({ worker }) => {
       const { session } = worker;
-      assert.match(session.sessionId, /^fake-/);
-      assert.equal(session.agentInfo?.name, 'fake-agent');
-      assert.deepEqual(
-        session.configOptions?.map((o) => [o.id, o.category]),
-        [
-          ['model', 'model'],
-          ['effort', 'thought_level'],
-        ],
-      );
-      assert.equal(session.modes?.currentModeId, 'ask');
-      assert.deepEqual(session.modes?.availableModes.map((m) => m.id), ['ask', 'auto']);
-      assert.ok(worker.pid > 0);
+      expect(session.sessionId).toMatch(/^fake-/);
+      expect(session.agentInfo?.name).toBe('fake-agent');
+      expect(session.configOptions?.map((o) => [o.id, o.category])).toStrictEqual([
+        ['model', 'model'],
+        ['effort', 'thought_level'],
+      ]);
+      expect(session.modes?.currentModeId).toBe('ask');
+      expect(session.modes?.availableModes.map((m) => m.id)).toStrictEqual(['ask', 'auto']);
+      expect(worker.pid).toBeGreaterThan(0);
     });
   });
 
@@ -160,9 +157,9 @@ describe('worker', () => {
     await withWorker('echo', async ({ worker, collector }) => {
       collector.startTurn();
       const response = await worker.prompt('hello');
-      assert.equal(response.stopReason, 'end_turn');
-      assert.equal(collector.text, 'echo: hello [model=fake-small effort=low]');
-      assert.equal(collector.lastToolTitle, 'read README.md');
+      expect(response.stopReason).toBe('end_turn');
+      expect(collector.text).toBe('echo: hello [model=fake-small effort=low]');
+      expect(collector.lastToolTitle).toBe('read README.md');
     });
   });
 
@@ -170,13 +167,13 @@ describe('worker', () => {
     await withWorker('echo', async (h) => {
       const options = await h.worker.setConfigOption('model', 'fake-large');
       const model = options.find((o) => o.id === 'model');
-      assert.equal(model?.type === 'select' && model.currentValue, 'fake-large');
-      assert.equal(await h.turn('hi'), 'echo: hi [model=fake-large effort=low]');
+      expect(model?.type === 'select' && model.currentValue).toBe('fake-large');
+      expect(await h.turn('hi')).toBe('echo: hi [model=fake-large effort=low]');
 
       await h.worker.setMode('auto');
 
       const err = await rejectsWith(h.worker.setConfigOption('model', 'fake-huge'), 'agent_error');
-      assert.match(err.message, /fake-large/);
+      expect(err.message).toMatch(/fake-large/);
     });
   });
 
@@ -184,8 +181,8 @@ describe('worker', () => {
     await withWorker('echo', async (h) => {
       await h.turn('one');
       await h.turn('two');
-      assert.equal(h.collector.text, 'echo: two [model=fake-small effort=low]');
-      assert.deepEqual(h.collector.usage, { input_tokens: 20, output_tokens: 10, cost_usd: 0.02 });
+      expect(h.collector.text).toBe('echo: two [model=fake-small effort=low]');
+      expect(h.collector.usage).toStrictEqual({ input_tokens: 20, output_tokens: 10, cost_usd: 0.02 });
     });
   });
 
@@ -195,7 +192,7 @@ describe('worker', () => {
       // Let the prompt reach the agent before cancelling.
       await new Promise((resolve) => setTimeout(resolve, 100));
       await worker.cancel();
-      assert.equal((await pending).stopReason, 'cancelled');
+      expect((await pending).stopReason).toBe('cancelled');
     });
   });
 
@@ -203,14 +200,14 @@ describe('worker', () => {
     const spawn = fakeAgentSpawn('handshake-hang');
     tags.push(spawn.tag);
     const err = await rejectsWith(
-      startWorker({ ...spawn, cwd, depth: 0 }, newSession, { onPermission: async () => ({ outcome: { outcome: 'cancelled' } }) }, {
+      startWorker({ ...spawn, cwd, depth: 0 }, newSession, { onPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }) }, {
         handshakeMs: 500,
         exitGraceMs: 300,
       }),
       'handshake_timeout',
     );
-    assert.match(err.message, /initialize/);
-    assert.equal(tagAlive(spawn.tag), false, 'adapter is gone after a failed handshake');
+    expect(err.message).toMatch(/initialize/);
+    expect(tagAlive(spawn.tag), 'adapter is gone after a failed handshake').toBe(false);
   });
 
   it('spawn_failed for a missing command', async () => {
@@ -218,12 +215,12 @@ describe('worker', () => {
       startWorker(
         { command: '/nonexistent/adapter', args: [], env: {}, cwd, depth: 0 },
         newSession,
-        { onPermission: async () => ({ outcome: { outcome: 'cancelled' } }) },
+        { onPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }) },
         limits,
       ),
       'spawn_failed',
     );
-    assert.match(err.message, /ENOENT/);
+    expect(err.message).toMatch(/ENOENT/);
   });
 
   it('spawn_failed when spawn rejects the arguments synchronously', async () => {
@@ -231,20 +228,20 @@ describe('worker', () => {
       startWorker(
         { command: process.execPath, args: ['bad\u0000arg'], env: {}, cwd, depth: 0 },
         newSession,
-        { onPermission: async () => ({ outcome: { outcome: 'cancelled' } }) },
+        { onPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }) },
         limits,
       ),
       'spawn_failed',
     );
-    assert.match(err.message, /cannot start adapter/);
+    expect(err.message).toMatch(/cannot start adapter/);
   });
 
   it('transport_lost when the adapter dies mid-prompt, with exit code and stderr', async () => {
     await withWorker('crash-on-prompt', async ({ worker }) => {
       const err = await rejectsWith(worker.prompt('x'), 'transport_lost');
-      assert.match(err.message, /boom/);
-      assert.match(err.message, /exit code 3/);
-      assert.match(worker.stderrTail(), /fake-agent: boom/);
+      expect(err.message).toMatch(/boom/);
+      expect(err.message).toMatch(/exit code 3/);
+      expect(worker.stderrTail()).toMatch(/fake-agent: boom/);
     });
   });
 
@@ -252,14 +249,14 @@ describe('worker', () => {
     const spawn = fakeAgentSpawn('orphan-exit');
     tags.push(spawn.tag);
     const err = await rejectsWith(
-      startWorker({ ...spawn, cwd, depth: 0 }, newSession, { onPermission: async () => ({ outcome: { outcome: 'cancelled' } }) }, {
+      startWorker({ ...spawn, cwd, depth: 0 }, newSession, { onPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }) }, {
         handshakeMs: 20_000,
         exitGraceMs: 300,
       }),
       'spawn_failed',
     );
-    assert.match(err.message, /exit code 5/);
-    assert.match(err.message, /early exit/);
+    expect(err.message).toMatch(/exit code 5/);
+    expect(err.message).toMatch(/early exit/);
     const orphan = grandchildPid(err.message);
     await waitFor('the stdout-holding grandchild to die', () => !isAlive(orphan));
   });
@@ -270,10 +267,10 @@ describe('worker', () => {
       await waitFor('the grandchild pid on stderr', () => worker.stderrTail().includes('grandchild pid='));
       orphan = grandchildPid(worker.stderrTail());
       // Without a live stdout holder this case degenerates into plain crash-on-prompt.
-      assert.ok(isAlive(orphan), 'the stdout-holding grandchild is running');
+      expect(isAlive(orphan), 'the stdout-holding grandchild is running').toBe(true);
       const err = await rejectsWith(worker.prompt('x'), 'transport_lost');
-      assert.match(err.message, /exit code 3/);
-      assert.match(err.message, /boom/);
+      expect(err.message).toMatch(/exit code 3/);
+      expect(err.message).toMatch(/boom/);
     });
     await waitFor('the stdout-holding grandchild to die', () => !isAlive(orphan));
   });
@@ -289,17 +286,17 @@ describe('worker', () => {
 
   it('fs/* call from the agent: one warning, prompt still completes', async () => {
     await withWorker('fs-call', async (h) => {
-      assert.equal(await h.turn('a'), 'echo: a [model=fake-small effort=low]');
+      expect(await h.turn('a')).toBe('echo: a [model=fake-small effort=low]');
       await h.turn('b');
-      assert.equal(h.warnings.length, 1);
-      assert.match(h.warnings[0] ?? '', /fs\/read_text_file/);
+      expect(h.warnings.length).toBe(1);
+      expect(h.warnings[0] ?? '').toMatch(/fs\/read_text_file/);
     });
   });
 
   it('notice goes to warnings', async () => {
     await withWorker('notice', async (h) => {
       await h.turn('n');
-      assert.deepEqual(h.collector.warnings, ['warning: fake notice — mode fell back']);
+      expect(h.collector.warnings).toStrictEqual(['warning: fake notice — mode fell back']);
     });
   });
 
@@ -307,8 +304,8 @@ describe('worker', () => {
     await withWorker(
       'echo',
       async (h) => {
-        assert.equal(h.worker.session.sessionId, 'abc');
-        assert.match(await h.turn('again'), /^resumed: echo: again/);
+        expect(h.worker.session.sessionId).toBe('abc');
+        expect(await h.turn('again')).toMatch(/^resumed: echo: again/);
       },
       { start: { kind: 'resume', sessionId: 'abc', cwd, mcpServers: [] } },
     );
@@ -321,40 +318,37 @@ describe('worker', () => {
       startWorker(
         { ...spawn, cwd, depth: 0 },
         { kind: 'resume', sessionId: 'abc', cwd, mcpServers: [] },
-        { onPermission: async () => ({ outcome: { outcome: 'cancelled' } }) },
+        { onPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }) },
         limits,
       ),
       'session_not_found',
     );
-    assert.equal(tagAlive(spawn.tag), false);
+    expect(tagAlive(spawn.tag)).toBe(false);
   });
 
   it('permission requests go to onPermission', async () => {
     const requests: RequestPermissionRequest[] = [];
     const answer =
       (response: RequestPermissionResponse) =>
-      async (request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
+      (request: RequestPermissionRequest): Promise<RequestPermissionResponse> => {
         requests.push(request);
-        return response;
+        return Promise.resolve(response);
       };
 
     await withWorker(
       'permission',
       async (h) => {
-        assert.equal(await h.turn('p'), 'allowed');
+        expect(await h.turn('p')).toBe('allowed');
       },
       { onPermission: answer({ outcome: { outcome: 'selected', optionId: 'yes' } }) },
     );
-    assert.equal(requests[0]?.options.length, 3);
-    assert.deepEqual(
-      requests[0]?.options.map((o) => o.kind),
-      ['allow_once', 'allow_always', 'reject_once'],
-    );
+    expect(requests[0]?.options.length).toBe(3);
+    expect(requests[0]?.options.map((o) => o.kind)).toStrictEqual(['allow_once', 'allow_always', 'reject_once']);
 
     await withWorker(
       'permission',
       async (h) => {
-        assert.equal(await h.turn('p'), 'cancelled');
+        expect(await h.turn('p')).toBe('cancelled');
       },
       { onPermission: answer({ outcome: { outcome: 'cancelled' } }) },
     );
@@ -367,7 +361,7 @@ describe('worker', () => {
       async (h) => {
         await h.turn('d');
         const info = h.updates.find((n) => n.update.sessionUpdate === 'session_info_update');
-        assert.equal(info?.update._meta?.throngDepth, '2');
+        expect(info?.update._meta?.throngDepth).toBe('2');
       },
       { depth: 1 },
     );
@@ -377,7 +371,7 @@ describe('worker', () => {
     const h = await start('echo');
     await Promise.all([h.worker.close(), h.worker.close()]);
     await h.worker.close();
-    assert.equal(isAlive(h.worker.pid), false);
+    expect(isAlive(h.worker.pid)).toBe(false);
     await rejectsWith(h.worker.prompt('late'), 'transport_lost');
     await rejectsWith(h.worker.cancel(), 'transport_lost');
   });

@@ -1,16 +1,15 @@
-import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { after, describe, it } from 'node:test';
-import type { Worker } from '../src/acp/types.ts';
-import { snapshotDescendants } from '../src/acp/process.ts';
-import { startWorker } from '../src/acp/worker.ts';
-import { fakeAgentSpawn } from './fake-agent/index.ts';
+import { afterAll, describe, expect, it } from 'vitest';
+import { fakeAgentSpawn } from '../../test/fake-agent/index.ts';
+import { snapshotDescendants } from './process.ts';
+import type { Worker } from './types.ts';
+import { startWorker } from './worker.ts';
 
 const cwd = process.cwd();
 const grandchildren: number[] = [];
 const tags: string[] = [];
 
-after(() => {
+afterAll(() => {
   for (const pid of grandchildren) {
     try {
       process.kill(pid, 'SIGKILL');
@@ -41,7 +40,7 @@ async function waitFor<T>(what: string, probe: () => T | undefined, timeoutMs = 
   for (;;) {
     const value = probe();
     if (value !== undefined) return value;
-    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+    if (Date.now() > deadline) expect.unreachable(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
@@ -52,7 +51,7 @@ async function startGrandchild(scenario: 'grandchild' | 'grandchild-detached' = 
   const worker = await startWorker(
     { ...spawn, cwd, depth: 0 },
     { kind: 'new', cwd, mcpServers: [] },
-    { onPermission: async () => ({ outcome: { outcome: 'cancelled' } }) },
+    { onPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }) },
     { handshakeMs: 5000, exitGraceMs: 300 },
   );
   const grandchild = await waitFor('grandchild pid on stderr', () => {
@@ -67,18 +66,18 @@ describe('process tree', () => {
   it('snapshotDescendants finds the grandchild', async () => {
     const { worker, grandchild } = await startGrandchild();
     try {
-      assert.ok((await snapshotDescendants(worker.pid)).includes(grandchild));
+      expect(await snapshotDescendants(worker.pid)).toContain(grandchild);
     } finally {
       await worker.close();
     }
-    assert.equal(isAlive(worker.pid), false);
+    expect(isAlive(worker.pid)).toBe(false);
   });
 
   it('close kills the adapter and its grandchild', async () => {
     const { worker, grandchild } = await startGrandchild();
-    assert.ok(isAlive(grandchild));
+    expect(isAlive(grandchild)).toBe(true);
     await worker.close();
-    assert.equal(isAlive(worker.pid), false);
+    expect(isAlive(worker.pid)).toBe(false);
     // A SIGKILLed grandchild stays a zombie until its new parent reaps it, so poll.
     await waitFor('grandchild to die', () => (isAlive(grandchild) ? undefined : true), 2000);
   });
@@ -86,9 +85,9 @@ describe('process tree', () => {
   it('close kills a grandchild that left the process group (snapshot path)', async () => {
     const { worker, grandchild } = await startGrandchild('grandchild-detached');
     // Its own group: the group signals in killTree cannot reach it, only the snapshot can.
-    assert.ok((await snapshotDescendants(worker.pid)).includes(grandchild));
+    expect(await snapshotDescendants(worker.pid)).toContain(grandchild);
     await worker.close();
-    assert.equal(isAlive(worker.pid), false);
+    expect(isAlive(worker.pid)).toBe(false);
     await waitFor('detached grandchild to die', () => (isAlive(grandchild) ? undefined : true), 2000);
   });
 });

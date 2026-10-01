@@ -115,9 +115,11 @@ class AcpWorker implements Worker {
         throw acp.RequestError.methodNotFound(method);
       });
     }
+    const { stdin, stdout } = this.#child;
+    if (!stdin || !stdout) throw new Error('adapter stdio pipes were not created');
     const stream = acp.ndJsonStream(
-      Writable.toWeb(this.#child.stdin!) as WritableStream<Uint8Array>,
-      Readable.toWeb(this.#child.stdout!) as ReadableStream<Uint8Array>,
+      Writable.toWeb(stdin) as WritableStream<Uint8Array>,
+      Readable.toWeb(stdout) as ReadableStream<Uint8Array>,
     );
     this.#connection = app.connect(stream);
     live.add(this);
@@ -188,9 +190,9 @@ class AcpWorker implements Worker {
     };
 
     const running = run();
-    running.catch(() => {});
-    timeout.catch(() => {});
-    spawnFailed.catch(() => {});
+    running.catch(() => { /* ignored */ });
+    timeout.catch(() => { /* ignored */ });
+    spawnFailed.catch(() => { /* ignored */ });
     try {
       await Promise.race([running, timeout, spawnFailed]);
     } catch (err) {
@@ -275,6 +277,7 @@ class AcpWorker implements Worker {
     try {
       return await send();
     } catch (err) {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- close() may run during the await; TS keeps the narrowing from the check above
       if (this.#closing) throw this.#error('transport_lost', `${method}: worker is closed`);
       if (this.#isTransportError(err)) {
         await this.#settleExit();

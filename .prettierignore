@@ -1,0 +1,10 @@
+node_modules/
+coverage/
+pnpm-lock.yaml
+# Owned by the Backlog.md CLI.
+backlog/
+.claude/worktrees/
+# Verbatim snapshot of the ACP registry.
+data/registry.json
+# Prose with hand-aligned yaml/ts examples inside; prettier reflows them.
+*.md

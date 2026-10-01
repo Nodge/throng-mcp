@@ -39,7 +39,7 @@ export async function probeHarness(
     worker = await startWorker(
       { ...launch, cwd, depth: opts.depth },
       { kind: 'new', cwd, mcpServers: [] },
-      { onPermission: async () => ({ outcome: { outcome: 'cancelled' } }) },
+      { onPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }) },
       { handshakeMs: opts.handshakeMs, exitGraceMs: 1000 },
     );
     const { configOptions, agentInfo } = worker.session;
@@ -55,7 +55,7 @@ export async function probeHarness(
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   } finally {
     await worker?.close();
-    if (cwd) await rm(cwd, { recursive: true, force: true }).catch(() => {});
+    if (cwd) await rm(cwd, { recursive: true, force: true }).catch(() => { /* ignored */ });
   }
 }
 
@@ -74,11 +74,13 @@ export async function listHarnesses(loaded: LoadedConfig, opts: ProbeOptions): P
   }
 
   const registry = loadRegistry();
-  const results = await Promise.all(HARNESS_IDS.map((id) => probeHarness(HARNESSES[id], config, registry, opts)));
+  const results = await Promise.all(
+    HARNESS_IDS.map(async (harness) => ({ harness, result: await probeHarness(HARNESSES[harness], config, registry, opts) })),
+  );
   const out: ListHarnessesOutput = { harnesses: [], unavailable: [], limits };
-  results.forEach((result, i) => {
+  for (const { harness, result } of results) {
     if (result.ok) out.harnesses.push(result.info);
-    else out.unavailable.push({ harness: HARNESS_IDS[i]!, reason: result.reason });
-  });
+    else out.unavailable.push({ harness, reason: result.reason });
+  }
   return out;
 }

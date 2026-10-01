@@ -25,14 +25,15 @@ export interface AdapterProcess {
  * A failed spawn (ENOENT, EACCES, bad cwd) arrives as the child's `error` event; the caller listens for it.
  */
 export function spawnAdapter(options: AdapterSpawnOptions): AdapterProcess {
-  const child = spawn(options.command, options.args, {
+  // Typed as nullable streams: on EMFILE/ENFILE Node skips stdio setup and leaves them null.
+  const child: ChildProcess = spawn(options.command, options.args, {
     cwd: options.cwd,
     env: options.env,
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true,
   });
   // EPIPE after the child died must not crash the server; the ACP layer notices the closed stream itself.
-  child.stdin?.on('error', () => {});
+  child.stdin?.on('error', () => { /* ignored */ });
 
   let tail = Buffer.alloc(0);
   child.stderr?.on('data', (chunk: Buffer) => {

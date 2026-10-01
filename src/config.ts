@@ -47,6 +47,7 @@ export interface LoadedConfig {
 }
 
 export function configPath(env: NodeJS.ProcessEnv = process.env): string {
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- an empty variable means unset
   return env.THRONG_MCP_CONFIG || join(homedir(), '.config', 'throng', 'config.yaml');
 }
 

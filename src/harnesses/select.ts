@@ -16,7 +16,7 @@ export interface SelectOption {
 /** First `select` option of `category`, with grouped values flattened. */
 export function optionByCategory(options: SessionConfigOption[] | undefined, category: string): SelectOption | undefined {
   const option = options?.find((o) => o.type === 'select' && o.category === category);
-  if (!option || option.type !== 'select') return undefined;
+  if (option?.type !== 'select') return undefined;
   const values = option.options.flatMap((o) => ('value' in o ? [o.value] : o.options.map((g) => g.value)));
   return { id: option.id, values };
 }

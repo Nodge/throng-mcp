@@ -1,8 +1,7 @@
-import assert from 'node:assert/strict';
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk';
-import { describe, it } from 'node:test';
-import { DEFAULT_CONFIG, type Config } from '../src/config.ts';
-import { createPermissionBridge, type PermissionDecision, resolvePolicy } from '../src/permissions.ts';
+import { describe, expect, it } from 'vitest';
+import { DEFAULT_CONFIG, type Config } from './config.ts';
+import { createPermissionBridge, type PermissionDecision, resolvePolicy } from './permissions.ts';
 
 function request(options: RequestPermissionRequest['options']): RequestPermissionRequest {
   return { sessionId: 's', toolCall: { toolCallId: 't1', title: 'write notes.txt', kind: 'edit' }, options };
@@ -11,9 +10,9 @@ function request(options: RequestPermissionRequest['options']): RequestPermissio
 describe('permissions', () => {
   it('resolvePolicy: per-harness override wins over the global default', () => {
     const config: Config = { ...DEFAULT_CONFIG, permissions: 'deny_all', harnesses: { codex: { permissions: 'auto' } } };
-    assert.equal(resolvePolicy(config, 'codex'), 'auto');
-    assert.equal(resolvePolicy(config, 'claude'), 'deny_all');
-    assert.equal(resolvePolicy(DEFAULT_CONFIG, 'opencode'), 'auto');
+    expect(resolvePolicy(config, 'codex')).toBe('auto');
+    expect(resolvePolicy(config, 'claude')).toBe('deny_all');
+    expect(resolvePolicy(DEFAULT_CONFIG, 'opencode')).toBe('auto');
   });
 
   it('auto rejects: reject_once picked by kind, never reject_always or allow_*, and reports the decision', async () => {
@@ -27,8 +26,8 @@ describe('permissions', () => {
         { optionId: 'no-def', name: 'Reject', kind: 'reject_once' },
       ]),
     );
-    assert.deepEqual(answer, { outcome: { outcome: 'selected', optionId: 'no-def' } });
-    assert.deepEqual(decisions, [{ title: 'write notes.txt', kind: 'edit', choice: 'no-def' }]);
+    expect(answer).toStrictEqual({ outcome: { outcome: 'selected', optionId: 'no-def' } });
+    expect(decisions).toStrictEqual([{ title: 'write notes.txt', kind: 'edit', choice: 'no-def' }]);
   });
 
   it('auto without a reject_once option answers cancelled', async () => {
@@ -40,8 +39,8 @@ describe('permissions', () => {
         { optionId: 'yes', name: 'Allow', kind: 'allow_once' },
       ]),
     );
-    assert.deepEqual(answer, { outcome: { outcome: 'cancelled' } });
-    assert.deepEqual(decisions, [{ title: 'write notes.txt', kind: 'edit', choice: 'cancelled' }]);
+    expect(answer).toStrictEqual({ outcome: { outcome: 'cancelled' } });
+    expect(decisions).toStrictEqual([{ title: 'write notes.txt', kind: 'edit', choice: 'cancelled' }]);
   });
 
   it('cancelAll answers a pending request cancelled, and every later one', async () => {
@@ -58,12 +57,12 @@ describe('permissions', () => {
     const pending = bridge.answer(request([{ optionId: 'y', name: 'Allow', kind: 'allow_once' }]));
     await new Promise((resolve) => setImmediate(resolve));
     bridge.cancelAll();
-    assert.deepEqual(await pending, { outcome: { outcome: 'cancelled' } });
-    assert.equal(sawAbort, true);
-    assert.deepEqual(await bridge.answer(request([{ optionId: 'y', name: 'Allow', kind: 'allow_once' }])), {
+    expect(await pending).toStrictEqual({ outcome: { outcome: 'cancelled' } });
+    expect(sawAbort).toBe(true);
+    expect(await bridge.answer(request([{ optionId: 'y', name: 'Allow', kind: 'allow_once' }]))).toStrictEqual({
       outcome: { outcome: 'cancelled' },
     });
-    assert.equal(decisions.length, 2);
-    assert.ok(decisions.every((d) => d.choice === 'cancelled'));
+    expect(decisions.length).toBe(2);
+    expect(decisions.every((d) => d.choice === 'cancelled')).toBe(true);
   });
 });

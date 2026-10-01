@@ -1,7 +1,6 @@
-import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { ThrongError } from '../src/contract.ts';
-import { Semaphore } from '../src/semaphore.ts';
+import { describe, expect, it } from 'vitest';
+import { ThrongError } from './contract.ts';
+import { Semaphore } from './semaphore.ts';
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -13,16 +12,16 @@ describe('Semaphore', () => {
     const order: string[] = [];
     const c = sem.acquire().then((r) => (order.push('c'), r));
     const d = sem.acquire().then((r) => (order.push('d'), r));
-    assert.equal(sem.waiting, 2);
+    expect(sem.waiting).toBe(2);
     await tick();
-    assert.deepEqual(order, []);
+    expect(order).toStrictEqual([]);
     b();
     const releaseC = await c;
-    assert.equal(sem.waiting, 1);
+    expect(sem.waiting).toBe(1);
     a();
     const releaseD = await d;
-    assert.deepEqual(order, ['c', 'd']);
-    assert.equal(sem.waiting, 0);
+    expect(order).toStrictEqual(['c', 'd']);
+    expect(sem.waiting).toBe(0);
     releaseC();
     releaseD();
   });
@@ -33,19 +32,19 @@ describe('Semaphore', () => {
     const controller = new AbortController();
     const queued = sem.acquire(controller.signal);
     const next = sem.acquire();
-    assert.equal(sem.waiting, 2);
+    expect(sem.waiting).toBe(2);
     controller.abort();
-    await assert.rejects(queued, (err: unknown) => err instanceof ThrongError && err.code === 'cancelled');
-    assert.equal(sem.waiting, 1);
+    await expect(queued).rejects.toSatisfy((err: unknown) => err instanceof ThrongError && err.code === 'cancelled');
+    expect(sem.waiting).toBe(1);
     first();
     const release = await next;
-    assert.equal(sem.waiting, 0);
+    expect(sem.waiting).toBe(0);
     release();
   });
 
   it('an already aborted signal rejects without queueing', async () => {
     const sem = new Semaphore(1);
-    await assert.rejects(sem.acquire(AbortSignal.abort()), (err: unknown) => err instanceof ThrongError && err.code === 'cancelled');
+    await expect(sem.acquire(AbortSignal.abort())).rejects.toSatisfy((err: unknown) => err instanceof ThrongError && err.code === 'cancelled');
     const release = await sem.acquire();
     release();
   });
@@ -59,7 +58,7 @@ describe('Semaphore', () => {
     let cGranted = false;
     const c = sem.acquire().then((r) => ((cGranted = true), r));
     await tick();
-    assert.equal(cGranted, false, 'a second release of `a` must not free another slot');
+    expect(cGranted, 'a second release of `a` must not free another slot').toBe(false);
     b();
     (await c)();
   });

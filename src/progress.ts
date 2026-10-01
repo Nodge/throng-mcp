@@ -16,10 +16,10 @@ export interface Progress {
 }
 
 export const noProgress: Progress = {
-  queued: () => {},
-  started: () => {},
-  tool: () => {},
-  text: () => {},
-  done: () => {},
+  queued: () => { /* no-op */ },
+  started: () => { /* no-op */ },
+  tool: () => { /* no-op */ },
+  text: () => { /* no-op */ },
+  done: () => { /* no-op */ },
   idle: () => Promise.resolve(),
 };
