@@ -152,7 +152,7 @@ describe('worker', () => {
                 ['effort', 'thought_level'],
             ]);
             expect(session.modes?.currentModeId).toBe('ask');
-            expect(session.modes?.availableModes.map(m => m.id)).toStrictEqual(['ask', 'auto']);
+            expect(session.modes?.availableModes.map(m => m.id)).toStrictEqual(['ask', 'auto', 'default']);
             expect(worker.pid).toBeGreaterThan(0);
         });
     });

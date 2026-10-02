@@ -109,6 +109,8 @@ function modes(session: FakeSession): SessionModeState {
         availableModes: [
             { id: 'ask', name: 'Ask' },
             { id: 'auto', name: 'Auto' },
+            // claude's asking mode, set under every policy but auto.
+            { id: 'default', name: 'Default' },
         ],
     };
 }

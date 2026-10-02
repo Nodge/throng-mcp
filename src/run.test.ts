@@ -13,10 +13,13 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, describe, expect, it } from 'vitest';
+import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { loadConfig, type LoadedConfig } from './config.ts';
 import type { RunFailure, RunSuccess } from './contract.ts';
+import { log } from './log.ts';
 import { createProgress, type ProgressNotification } from './mcp/progress.ts';
+import type { Elicitation } from './permissions.ts';
 import { noProgress, type Progress } from './progress.ts';
 import { EXECUTOR_PREFIX } from './prompt.ts';
 import { runThronglet } from './mcp/tools/run-thronglet.ts';
@@ -315,16 +318,12 @@ describe('runThronglet', () => {
         expect(tagAlive(tag)).toBe(false);
     });
 
-    it('config error and unsupported policy refuse to run', async () => {
+    it('a config error refuses to run', async () => {
         const broken = failed(
             await runThronglet(input('claude/fake-small'), makeCtx(loadYaml('limits: [\n'))),
             'harness_unavailable'
         );
         expect(broken.message.startsWith('config error:'), broken.message).toBe(true);
-
-        const { loaded } = fakeClaude('echo', 'permissions: deny_all');
-        const policy = failed(await runThronglet(input('claude/fake-small'), makeCtx(loaded)), 'harness_unavailable');
-        expect(policy.message).toMatch(/permissions "deny_all" is not supported yet/);
     });
 
     it('timeout → timeout with session_id, adapter gone', async () => {
@@ -496,6 +495,98 @@ describe('runThronglet', () => {
     });
 });
 
+describe('permission policies', () => {
+    type Asked = Parameters<Elicitation['ask']>;
+
+    /** Answers each ask with `answer`; records what it was asked. */
+    function fakeElicitation(answer: (...asked: Asked) => Promise<ElicitResult>): Elicitation & { asked: Asked[] } {
+        const asked: Asked[] = [];
+        return {
+            asked,
+            ask: (...args) => {
+                asked.push(args);
+                return answer(...args);
+            },
+        };
+    }
+
+    const policyRun = (policy: string, overrides: Partial<RunContext> = {}, limits = '') => {
+        const { loaded, tag } = fakeClaude('permission', `permissions: ${policy}\n${limits}`);
+        return { tag, run: runThronglet(input('claude/fake-small'), makeCtx(loaded, overrides)) };
+    };
+
+    it('allow_all → allowed; deny_all → rejected', async () => {
+        expect(ok(await policyRun('allow_all').run).text).toBe('allowed');
+        expect(ok(await policyRun('deny_all').run).text).toBe('rejected');
+    });
+
+    it('elicit: accept → allowed, decline → rejected; asked with the title and the elicitation_s timeout', async () => {
+        const accept = fakeElicitation(() =>
+            Promise.resolve({ action: 'accept', content: { decision: 'allow_once' } })
+        );
+        const progress = recordingProgress();
+        expect(ok(await policyRun('elicit', { elicitation: accept, progress }).run).text).toBe('allowed');
+        expect(accept.asked).toHaveLength(1);
+        const [[params, opts]] = accept.asked as [Asked];
+        expect(params.message.split('\n')[0]).toBe('[agent] write notes.txt');
+        expect(opts.timeoutMs).toBe(600_000);
+        expect(progress.calls).toContain('tool permission: write notes.txt');
+
+        const decline = fakeElicitation(() => Promise.resolve({ action: 'decline' }));
+        expect(ok(await policyRun('elicit', { elicitation: decline }).run).text).toBe('rejected');
+    });
+
+    it('elicit: an unanswered elicitation times out → cancelled, the run goes on', async () => {
+        // Rejects after timeoutMs, as elicitInput does with its `timeout` option.
+        const silent = fakeElicitation(
+            (_params, { timeoutMs }) =>
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Request timed out')), timeoutMs))
+        );
+        const { run } = policyRun('elicit', { elicitation: silent }, 'limits: { elicitation_s: 0.2 }');
+        expect(ok(await run).text).toBe('cancelled');
+        expect(silent.asked[0]?.[1].timeoutMs).toBe(200);
+    });
+
+    it('elicit without an elicitation on the context → elicitation_unsupported, no spawn', async () => {
+        const { run, tag } = policyRun('elicit');
+        const payload = failed(await run, 'elicitation_unsupported');
+        expect(payload.message).toMatch(/set permissions in the throng config to auto, allow_all or deny_all/);
+        expect(tagAlive(tag)).toBe(false);
+
+        // The per-harness override is the key named.
+        const override = fakeClaude('permission', '    permissions: elicit');
+        const claude = failed(
+            await runThronglet(input('claude/fake-small'), makeCtx(override.loaded)),
+            'elicitation_unsupported'
+        );
+        expect(claude.message).toMatch(/set harnesses\.claude\.permissions in/);
+        expect(tagAlive(override.tag)).toBe(false);
+    });
+
+    it('cancel while the elicitation is pending → cancelled; ask saw the abort; the decision log says cancelled', async () => {
+        const info = vi.spyOn(log, 'info');
+        try {
+            const pending = fakeElicitation(
+                (_params, { signal }) =>
+                    new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))))
+            );
+            const controller = new AbortController();
+            const { run, tag } = policyRun('elicit', { elicitation: pending, signal: controller.signal });
+            await waitFor('the elicitation', () => pending.asked.length === 1);
+            controller.abort();
+            failed(await run, 'cancelled');
+            expect(pending.asked[0]?.[1].signal.aborted).toBe(true);
+            expect(info).toHaveBeenCalledWith(
+                'permission',
+                expect.objectContaining({ title: 'write notes.txt', choice: 'cancelled' })
+            );
+            expect(tagAlive(tag), 'adapter still running').toBe(false);
+        } finally {
+            info.mockRestore();
+        }
+    });
+});
+
 describe('sendMessage', () => {
     /** Writes a session record by hand, as a run_thronglet call would have. */
     async function record(ctx: RunContext, sessionId: string, fields: Partial<SessionRecord> = {}): Promise<void> {
@@ -627,15 +718,16 @@ describe('sendMessage', () => {
         expect(tagAlive(tag), 'adapter still running').toBe(false);
     });
 
-    it('the guards of a new run apply: unsupported policy, depth', async () => {
-        const denied = fakeClaude('echo', 'permissions: deny_all');
-        const deniedCtx = makeCtx(denied.loaded);
-        await record(deniedCtx, 'fake-a');
+    it('the guards of a new run apply: elicit without elicitation, depth', async () => {
+        const elicit = fakeClaude('echo', 'permissions: elicit');
+        const elicitCtx = makeCtx(elicit.loaded);
+        await record(elicitCtx, 'fake-a');
         const policy = failed(
-            await sendMessage({ session_id: 'fake-a', prompt: 'x' }, deniedCtx),
-            'harness_unavailable'
+            await sendMessage({ session_id: 'fake-a', prompt: 'x' }, elicitCtx),
+            'elicitation_unsupported'
         );
-        expect(policy.message).toMatch(/permissions "deny_all" is not supported yet/);
+        expect(policy.message).toMatch(/set permissions in the throng config/);
+        expect(tagAlive(elicit.tag)).toBe(false);
 
         const deep = fakeClaude('echo', 'limits: { max_depth: 2 }');
         const deepCtx = makeCtx(deep.loaded, { depth: 2 });

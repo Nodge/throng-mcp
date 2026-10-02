@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { startBackground } from '../background.ts';
 import { type LoadedConfig, readDepth } from '../config.ts';
+import type { Elicitation } from '../permissions.ts';
 import type { RunContext, RunOutcome } from '../run.ts';
 import type { SessionRegistry } from '../registry.ts';
 import type { Semaphore } from '../semaphore.ts';
@@ -68,6 +69,18 @@ export function registerTools(server: McpServer, deps: ToolDeps): Tools {
         return call;
     };
 
+    // Capabilities are known only after initialize, so this is read per call. Background turns use it too: elicitInput
+    // is server-level and does not need the call to stay open.
+    const elicitation = (): { elicitation: Elicitation } | undefined =>
+        server.server.getClientCapabilities()?.elicitation?.form
+            ? {
+                  elicitation: {
+                      ask: (params, { signal, timeoutMs }) =>
+                          server.server.elicitInput(params, { signal, timeout: timeoutMs }),
+                  },
+              }
+            : undefined;
+
     const env: ToolEnv = {
         loaded,
         sessions,
@@ -76,7 +89,16 @@ export function registerTools(server: McpServer, deps: ToolDeps): Tools {
         async callRun(extra, start) {
             const progress = createProgress(extra);
             const outcome = await track(
-                start({ loaded, depth: readDepth(), semaphore, sessions, signal: extra.signal, progress, cacheDir })
+                start({
+                    loaded,
+                    depth: readDepth(),
+                    semaphore,
+                    sessions,
+                    signal: extra.signal,
+                    progress,
+                    cacheDir,
+                    ...elicitation(),
+                })
             );
             // A progress notification written after the result hits the client as an unknown token. Bounded: done() already
             // stopped new sends. After an abort the SDK drops the result anyway, so don't wait.
@@ -87,7 +109,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): Tools {
             const progress = createProgress(extra);
             const result = await startBackground(
                 start,
-                { loaded, depth: readDepth(), semaphore, sessions, cacheDir },
+                { loaded, depth: readDepth(), semaphore, sessions, cacheDir, ...elicitation() },
                 { ...(sessionId !== undefined ? { sessionId } : {}), track, progress, signal: extra.signal }
             );
             if (!extra.signal.aborted) await progress.idle();

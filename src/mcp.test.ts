@@ -8,7 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+    CallToolResultSchema,
+    type ElicitRequest,
+    type ElicitRequestFormParams,
+    ElicitRequestSchema,
+    type ElicitResult,
+} from '@modelcontextprotocol/sdk/types.js';
 import type {
     CancelThrongletOutput,
     ListHarnessesOutput,
@@ -291,11 +297,15 @@ describe('mcp server over stdio', () => {
 });
 
 describe('run_thronglet over stdio', () => {
-    /** Server whose `claude` harness is the fake agent in `scenario` (plus `agentEnv`); `tag` finds its adapter processes. */
+    /**
+     * Server whose `claude` harness is the fake agent in `scenario` (plus `agentEnv`); `tag` finds its adapter processes.
+     * `config` lines are appended to the config file; `onElicit` makes a client with the elicitation capability.
+     */
     async function connect(
         scenario: string,
         agentEnv: Record<string, string> = {},
-        cache = join(dir, 'cache')
+        cache = join(dir, 'cache'),
+        opts: { config?: string; onElicit?: (request: ElicitRequest) => ElicitResult } = {}
     ): Promise<{ client: Client; tag: string; pid: number; close: () => Promise<void> }> {
         const tag = newTag();
         const config = writeConfig(
@@ -306,6 +316,7 @@ describe('run_thronglet over stdio', () => {
                 `    command: ${JSON.stringify(process.execPath)}`,
                 `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
                 `    env: ${JSON.stringify({ FAKE_SCENARIO: scenario, ...agentEnv })}`,
+                opts.config ?? '',
                 '',
             ].join('\n')
         );
@@ -316,7 +327,12 @@ describe('run_thronglet over stdio', () => {
             env: serverEnv({ THRONG_MCP_CONFIG: config, THRONG_MCP_CACHE_DIR: cache }),
             stderr: 'pipe',
         });
-        const client = new Client({ name: 'throng-test', version: '0' });
+        const { onElicit } = opts;
+        const client = new Client(
+            { name: 'throng-test', version: '0' },
+            onElicit ? { capabilities: { elicitation: {} } } : {}
+        );
+        if (onElicit) client.setRequestHandler(ElicitRequestSchema, request => onElicit(request));
         await client.connect(transport);
         return { client, tag, pid: transport.pid ?? 0, close: () => client.close() };
     }
@@ -638,6 +654,56 @@ describe('run_thronglet over stdio', () => {
             expect((payloadOf(listed) as ListThrongletsOutput).thronglets).toMatchObject([
                 { session_id: id, state: 'idle', queued: 0 },
             ]);
+        } finally {
+            await close();
+        }
+    });
+
+    it('permissions elicit: the client is asked in form mode and its answer reaches the agent', async () => {
+        const asked: ElicitRequest['params'][] = [];
+        const { client, tag, close } = await connect('permission', {}, join(dir, 'cache'), {
+            config: 'permissions: elicit',
+            onElicit: request => {
+                asked.push(request.params);
+                return { action: 'accept', content: { decision: 'allow_once' } };
+            },
+        });
+        try {
+            const result = await client.callTool({
+                name: 'run_thronglet',
+                arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo, description: 'test' },
+            });
+            expect(result.isError).toBe(undefined);
+            expect((payloadOf(result) as RunSuccess).text).toBe('allowed');
+            expect(asked).toHaveLength(1);
+            const params = asked[0] as ElicitRequestFormParams;
+            expect(params.message.split('\n')[0]).toBe('[agent] write notes.txt');
+            expect(params.requestedSchema.properties.decision).toStrictEqual({
+                type: 'string',
+                title: 'Decision',
+                oneOf: [
+                    { const: 'allow_once', title: 'Allow' },
+                    { const: 'reject_once', title: 'Reject' },
+                ],
+            });
+            expect(tagAlive(tag)).toBe(false);
+        } finally {
+            await close();
+        }
+    });
+
+    it('permissions elicit with a client without elicitation → elicitation_unsupported tool error, no spawn', async () => {
+        const { client, tag, close } = await connect('permission', {}, join(dir, 'cache'), {
+            config: 'permissions: elicit',
+        });
+        try {
+            const result = await client.callTool({
+                name: 'run_thronglet',
+                arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo, description: 'test' },
+            });
+            expect(result.isError).toBe(true);
+            expect(payloadOf(result)).toMatchObject({ code: 'elicitation_unsupported' });
+            expect(tagAlive(tag)).toBe(false);
         } finally {
             await close();
         }

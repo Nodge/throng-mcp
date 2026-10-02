@@ -347,7 +347,7 @@ Always `*_once`, never `allow_always`: Claude's `allow-with-updates` writes a ru
 `auto` trusts the harness's own auto mode and nothing more: what that mode does not approve on its own is refused by the server. Answering `allow_once` there would turn `auto` into `allow_all` whenever a harness asks a lot (Claude's `acceptEdits` fallback, Codex's "potentially unsafe" checks).
 
 `elicit`:
-- At call start check `server.getClientCapabilities()?.elicitation`; missing → tool error `elicitation_unsupported`, no spawn.
+- At call start check `server.getClientCapabilities()?.elicitation?.form` (the SDK normalizes an empty `elicitation: {}` into `{form: {}}`; a URL-only client would fail every ask): missing → tool error `elicitation_unsupported`, no spawn. Checked per call, not at registration: capabilities arrive with initialize.
 - `elicitInput` in form mode: `message` = `[agent] <toolCall.title>` + kind + `rawInput` (JSON, truncated to 2 KB) + locations; field `decision` is a titled `oneOf` of the kinds present in `options`. Not `enumNames` (deprecated).
 - `accept` → the chosen optionId; `decline` → `reject_once` (or `cancelled`); `cancel` → `cancelled`.
 - Wait timeout 10 min → `cancelled` (the agent gets a rejection, the call continues).

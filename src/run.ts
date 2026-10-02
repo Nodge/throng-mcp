@@ -21,7 +21,14 @@ import { harnessById, loadRegistry } from './harnesses/index.ts';
 import { selectEffort, selectModel } from './harnesses/select.ts';
 import { RunLifecycle } from './lifecycle.ts';
 import { log } from './log.ts';
-import { createPermissionBridge, type PermissionBridge, resolvePolicy } from './permissions.ts';
+import {
+    createPermissionBridge,
+    deciderFor,
+    type Elicitation,
+    isThrongResultCall,
+    type PermissionBridge,
+    resolvePolicy,
+} from './permissions.ts';
 import type { Progress } from './progress.ts';
 import { buildCorrectivePrompt, buildPrompt } from './prompt.ts';
 import type { SessionRegistry } from './registry.ts';
@@ -30,7 +37,7 @@ import { endTurn, type SessionRecord, updateSessionRecord, writeSessionRecord } 
 import type { SubmitState } from './structured/validate.ts';
 
 // The pipeline shared by run_thronglet and send_message (DESIGN §3.2, §3.3, §4.2, §7):
-// guards → session queue → semaphore → Worker → auto policy → model/effort → prompt → payload. The adapter's lifetime is in lifecycle.ts.
+// guards → session queue → semaphore → Worker → permission policy → model/effort → prompt → payload. The adapter's lifetime is in lifecycle.ts.
 
 export interface RunContext {
     loaded: LoadedConfig;
@@ -52,6 +59,8 @@ export interface RunContext {
     exitGraceMs?: number;
     /** Right before the first prompt goes out, once the session record says the turn runs (background acceptance, §3.6). */
     onTurnStarted?: (sessionId: string) => void;
+    /** The MCP client's elicitation; undefined when the client lacks the capability (policy `elicit` then fails). */
+    elicitation?: Elicitation;
 }
 
 export type RunOutcome = { ok: true; payload: RunSuccess } | { ok: false; payload: RunFailure };
@@ -164,14 +173,22 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         if (loaded.error) throw new ThrongError('harness_unavailable', `config error: ${loaded.error}`);
         const { config } = loaded;
         const policy = resolvePolicy(config, target.harness);
-        if (policy !== 'auto') {
+        if (policy === 'elicit' && !ctx.elicitation) {
+            const key = config.harnesses[target.harness]?.permissions
+                ? `harnesses.${target.harness}.permissions`
+                : 'permissions';
             throw new ThrongError(
-                'harness_unavailable',
-                `permissions "${policy}" is not supported yet (v2); set permissions: auto`
+                'elicitation_unsupported',
+                `permissions "elicit" needs an MCP client that supports elicitation, and this one does not; set ${key} in the throng config to auto, allow_all or deny_all`
             );
         }
-        const permissions = createPermissionBridge(policy, decision =>
-            log.info('permission', { tool: call.tool, session: sessionId, ...decision })
+        const permissions = createPermissionBridge(
+            policy,
+            decision => log.info('permission', { tool: call.tool, session: sessionId, ...decision }),
+            deciderFor(policy, {
+                ...(ctx.elicitation ? { elicitation: ctx.elicitation } : {}),
+                elicitationTimeoutMs: config.limits.elicitation_s * 1000,
+            })
         );
         bridge = permissions;
         const maxDepth = config.limits.max_depth;
@@ -240,7 +257,12 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         const { launch } = resolution;
         const hooks: WorkerHooks = {
             onUpdate,
-            onPermission: request => permissions.answer(request),
+            onPermission: request => {
+                if (policy === 'elicit' && !isThrongResultCall(request.toolCall)) {
+                    ctx.progress.tool(`permission: ${request.toolCall.title ?? request.toolCall.toolCallId}`);
+                }
+                return permissions.answer(request);
+            },
             onWarning: warn,
         };
         const worker = await lifecycle.start(

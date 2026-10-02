@@ -45,7 +45,7 @@ Pass `schema` (JSON Schema) when you will parse the result rather than read it. 
 
 ## Permissions
 
-What a thronglet may do on disk comes from the throng config (`permissions:` in `~/.config/throng/config.yaml`), not from a tool parameter: a calling model cannot grant itself more. Today `auto` is the only policy that runs: each harness's own auto-approve mode, and what that mode does not approve on its own is refused (other policies are planned; set now, they fail the run with `harness_unavailable`). When a result reports refused edits or permission errors, that is the policy at work and a rephrased prompt meets the same refusal: report it to the user, or do that part of the work yourself.
+What a thronglet may do on disk comes from the throng config (`permissions:` in `~/.config/throng/config.yaml`), not from a tool parameter: a calling model cannot grant itself more. `auto` (the default) runs each harness in its own auto-approve mode and refuses what that mode does not approve on its own; `allow_all` allows every request once, `deny_all` refuses every one; `elicit` puts each request in front of the human as a dialog in the client, and their answer goes to the agent (a background turn's requests arrive the same way, so the human may be asked while you do other work; an unanswered dialog times out and counts as refused). `elicit` needs a client with elicitation: a throng server inside a thronglet usually has none, and the call fails with `elicitation_unsupported` before anything starts. When a result reports refused edits or permission errors, that is the policy (or the human) at work and a rephrased prompt meets the same refusal: report it to the user, or do that part of the work yourself.
 
 ## Reading results
 

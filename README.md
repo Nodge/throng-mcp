@@ -1,6 +1,6 @@
 # throng
 
-An MCP server for delegating coding tasks to other agents. `run_thronglet` starts Claude Code, Codex or OpenCode over ACP (Agent Client Protocol) in the directory you give it, runs one prompt to completion and returns the agent's final message. `send_message` sends the next message into that session; with `background: true` either call returns at once and `wait_thronglet` collects the result. `list_thronglets` shows the sessions and what each is doing, `cancel_thronglet` stops a session's running turn. `list_harnesses` shows which harnesses are installed, with their models and effort levels. The nested agent edits the live tree at `cwd`: there is no sandbox, worktree or apply-back step. v1 runs every harness in its own auto-approve mode (`permissions: auto`); whatever that mode still asks about, throng refuses.
+An MCP server for delegating coding tasks to other agents. `run_thronglet` starts Claude Code, Codex or OpenCode over ACP (Agent Client Protocol) in the directory you give it, runs one prompt to completion and returns the agent's final message. `send_message` sends the next message into that session; with `background: true` either call returns at once and `wait_thronglet` collects the result. `list_thronglets` shows the sessions and what each is doing, `cancel_thronglet` stops a session's running turn. `list_harnesses` shows which harnesses are installed, with their models and effort levels. The nested agent edits the live tree at `cwd`: there is no sandbox, worktree or apply-back step. By default every harness runs in its own auto-approve mode (`permissions: auto`) and whatever that mode still asks about, throng refuses; see [Permissions](#permissions) for the other policies.
 
 ## Requirements
 
@@ -111,8 +111,9 @@ Failure is an MCP tool error (`isError: true`) with:
 
 | code | meaning |
 |---|---|
-| `harness_unavailable` | adapter not found (message has the install command), config error, or unsupported permission policy; checked before spawn |
+| `harness_unavailable` | adapter not found (message has the install command) or config error; checked before spawn |
 | `depth_exceeded` | nested throng calls deeper than `limits.max_depth` |
+| `elicitation_unsupported` | the policy is `elicit` and the MCP client can't show elicitation dialogs; checked before spawn |
 | `session_not_found` | send_message / wait_thronglet: no session record for the id, or the harness can't resume it |
 | `spawn_failed` | the adapter process could not start, or `cwd` is not a directory |
 | `handshake_timeout` | the adapter didn't finish initialize/session setup within `limits.handshake_s` |
@@ -126,8 +127,6 @@ Failure is an MCP tool error (`isError: true`) with:
 | `structured_invalid` | with schema: the last `submit_result` was rejected after 2 corrective prompts; message has the ajv errors |
 | `refusal` | the agent refused (stop_reason `refusal`) |
 | `agent_error` | anything else the adapter reported |
-
-`elicitation_unsupported` belongs to a feature not built yet and doesn't occur today.
 
 With `schema`, throng gives the nested session a small MCP server, `throng_result`, with one tool, `submit_result`, and tells the agent to finish by calling it. The schema is the tool's input schema (wrapped under `result`, `$defs` / `definitions` hoisted to the root), so the prompt doesn't repeat it. A permission request for `submit_result` is always allowed, whatever the policy. The tool validates with ajv and returns the errors to the agent, which fixes the result within the same turn. A turn that ends without a valid result gets a corrective prompt, at most 2; then the call fails with `structured_missing` or `structured_invalid`, carrying `text` (what the agent said) and `session_id`, so you can `send_message` into the session. A schema ajv can't compile is rejected as invalid input before anything starts.
 
@@ -211,9 +210,7 @@ Cancels the session's running turn (ACP `session/cancel`, then the adapter is cl
 Optional: `~/.config/throng/config.yaml`.
 
 ```yaml
-# Permission policy: v1 supports only `auto` (each harness's own auto-approve mode;
-# a permission request the harness still raises is answered reject_once).
-# allow_all | deny_all | elicit are v2; setting them now makes run_thronglet fail with harness_unavailable.
+# Permission policy: auto | allow_all | deny_all | elicit (see Permissions below).
 permissions: auto
 
 # Per-harness overrides, all optional.
@@ -221,7 +218,7 @@ harnesses:
   # claude:
   #   env: { CLAUDE_CODE_OAUTH_TOKEN: "..." }  # extra adapter env; e.g. auth when the standalone `claude` isn't logged in
   # codex:
-  #   permissions: allow_all                   # per-harness policy override (v2)
+  #   permissions: allow_all                   # per-harness policy override
   # opencode:
   #   command: /opt/opencode                   # adapter outside PATH: absolute path, or a name looked up on PATH
   #   args: [acp]                              # replaces the default args
@@ -230,7 +227,7 @@ harnesses:
 limits:
   timeout_s: 21600       # default run_thronglet timeout
   handshake_s: 60        # adapter start + session setup
-  elicitation_s: 600     # v2
+  elicitation_s: 600     # policy elicit: how long a permission dialog waits for an answer
   max_concurrency: 10    # parallel runs per server process
   max_depth: 2           # nested throng → harness → throng → … levels
 ```
@@ -244,6 +241,17 @@ Environment variables of the server:
 | `THRONG_MCP_CONFIG` | config path instead of `~/.config/throng/config.yaml` |
 | `THRONG_MCP_CACHE_DIR` | cache dir instead of `~/.cache/throng` |
 | `THRONG_MCP_DEPTH` | nesting depth; set by throng for its children, you don't set it by hand |
+
+### Permissions
+
+The policy comes from the config only, never from a tool parameter, so the calling model can't grant itself more than the config allows. A permission request is answered with an option picked by its kind, always a one-time one: throng never answers "always allow" (Claude would write that rule into the project settings).
+
+- `auto` (default): each harness runs in its own auto-approve mode (Claude `auto`, Codex `agent`, OpenCode as configured); whatever it still asks about is rejected (`reject_once`, or `cancelled` when there is none).
+- `allow_all`: the harness runs in its asking mode (Claude `default`, Codex `read-only`, OpenCode with every permission set to `ask`) and every request is allowed once.
+- `deny_all`: the same asking mode; every request is rejected once (or `cancelled`).
+- `elicit`: the same asking mode; each request is shown to you as a dialog in the MCP client (the tool title, kind, input truncated to 2 KB, paths) with the one-time choices the harness offered. Your answer goes to the agent; Decline rejects, dismissing the dialog or no answer within `limits.elicitation_s` cancels the request, and the agent carries on either way. Background turns ask the same way. Needs an MCP client that supports elicitation (Claude Code does); otherwise the call fails with `elicitation_unsupported` before anything starts. Inside a nested thronglet the client is the harness, which usually can't: a nested call under `elicit` fails that way.
+
+Throng's own `submit_result` (structured output) is allowed under every policy. Cancelling a run answers its pending requests `cancelled` and closes any open dialog.
 
 Auth: the nested harness uses whatever login its CLI has. If `claude auth status` says not logged in, put `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) into `harnesses.claude.env` as above. Codex and OpenCode use their own logins: `codex login`, `opencode auth login`. OpenCode custom providers live in your `~/.config/opencode/opencode.json`; throng doesn't touch it.
 
@@ -296,7 +304,8 @@ Record the adapter versions `list_harnesses` reported in the backlog task notes.
 
 ## Troubleshooting
 
-- `harness_unavailable`: the adapter isn't on PATH, and the message carries the install command; or the config is broken (message starts with `config error:`): fix the yaml, throng won't run on defaults; or `permissions` is something other than `auto` (v2).
+- `harness_unavailable`: the adapter isn't on PATH, and the message carries the install command; or the config is broken (message starts with `config error:`): fix the yaml, throng won't run on defaults.
+- `elicitation_unsupported`: `permissions: elicit` (global or `harnesses.<harness>.permissions`) but the MCP client has no elicitation support; the message names the key. Use a client that has it or pick another policy.
 - A warning `permission mode "auto" not applied: the agent switched to "acceptEdits"`: Claude Code has no auto mode for that model (haiku, for one) and falls back to accept-edits; file edits are still auto-approved, anything else the harness asks about is rejected by throng (`auto` never widens into allow-all). Pick another model if you need the real auto mode.
 - `model_rejected`: the model isn't one of the harness's values. Call `list_harnesses` for the current list; they are the harness's own option values and change with harness versions.
 - `handshake_timeout` / `spawn_failed` / `handshake_failed`: the message includes the adapter's stderr. Usual cause is auth: check `claude auth status` (or set `CLAUDE_CODE_OAUTH_TOKEN` in config), `codex login`, `opencode auth login`. Slow first start: raise `limits.handshake_s`.
