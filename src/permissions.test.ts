@@ -1,11 +1,20 @@
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type Config } from './config.ts';
-import { createPermissionBridge, type PermissionDecision, resolvePolicy } from './permissions.ts';
+import { createPermissionBridge, isThrongResultCall, type PermissionDecision, resolvePolicy } from './permissions.ts';
 
-function request(options: RequestPermissionRequest['options']): RequestPermissionRequest {
-    return { sessionId: 's', toolCall: { toolCallId: 't1', title: 'write notes.txt', kind: 'edit' }, options };
+function request(
+    options: RequestPermissionRequest['options'],
+    toolCall: RequestPermissionRequest['toolCall'] = { toolCallId: 't1', title: 'write notes.txt', kind: 'edit' }
+): RequestPermissionRequest {
+    return { sessionId: 's', toolCall, options };
 }
+
+const submitCall = { toolCallId: 't9', title: 'mcp.throng_result.submit_result', kind: 'other' } as const;
+const onceOptions: RequestPermissionRequest['options'] = [
+    { optionId: 'ok', name: 'Allow', kind: 'allow_once' },
+    { optionId: 'no', name: 'Reject', kind: 'reject_once' },
+];
 
 describe('permissions', () => {
     it('resolvePolicy: per-harness override wins over the global default', () => {
@@ -45,6 +54,43 @@ describe('permissions', () => {
         );
         expect(answer).toStrictEqual({ outcome: { outcome: 'cancelled' } });
         expect(decisions).toStrictEqual([{ title: 'write notes.txt', kind: 'edit', choice: 'cancelled' }]);
+    });
+
+    it('isThrongResultCall: by title substrings, codex and claude spellings', () => {
+        expect(isThrongResultCall(submitCall)).toBe(true);
+        expect(isThrongResultCall({ toolCallId: 't', title: 'mcp__throng_result__submit_result' })).toBe(true);
+        expect(isThrongResultCall({ toolCallId: 't', title: 'mcp.other.submit_result' })).toBe(false);
+        expect(isThrongResultCall({ toolCallId: 't', title: 'mcp.throng_result.other' })).toBe(false);
+        expect(isThrongResultCall({ toolCallId: 't' })).toBe(false);
+    });
+
+    it('our submit_result is allowed once before the policy; other tools still rejected', async () => {
+        const decisions: PermissionDecision[] = [];
+        const bridge = createPermissionBridge('auto', d => decisions.push(d));
+        expect(await bridge.answer(request(onceOptions, submitCall))).toStrictEqual({
+            outcome: { outcome: 'selected', optionId: 'ok' },
+        });
+        expect(await bridge.answer(request(onceOptions))).toStrictEqual({
+            outcome: { outcome: 'selected', optionId: 'no' },
+        });
+        expect(decisions).toStrictEqual([
+            { title: 'mcp.throng_result.submit_result', kind: 'other', choice: 'ok' },
+            { title: 'write notes.txt', kind: 'edit', choice: 'no' },
+        ]);
+    });
+
+    it('our submit_result without an allow_once option → the policy answers, never allow_always', async () => {
+        const bridge = createPermissionBridge('auto', () => undefined);
+        const answer = await bridge.answer(
+            request(
+                [
+                    { optionId: 'always', name: 'Always', kind: 'allow_always' },
+                    { optionId: 'no', name: 'Reject', kind: 'reject_once' },
+                ],
+                submitCall
+            )
+        );
+        expect(answer).toStrictEqual({ outcome: { outcome: 'selected', optionId: 'no' } });
     });
 
     it('cancelAll answers a pending request cancelled, and every later one', async () => {

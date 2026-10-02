@@ -37,7 +37,7 @@ claude mcp list
 
 Tool names in Claude Code: `mcp__throng__run_thronglet`, `mcp__throng__resume_thronglet`, `mcp__throng__list_harnesses`.
 
-Check the setup: ask Claude to call `list_harnesses` (each installed adapter is started without a prompt, so it costs no tokens), or run `pnpm smoke claude/haiku` from the repo (spends a few tokens, see [Smoke](#smoke-maintainer)).
+Check the setup: ask Claude to call `list_harnesses` (each installed adapter is started without a prompt, so it costs no tokens), or run `pnpm smoke claude/sonnet` from the repo (spends a few tokens, see [Smoke](#smoke-maintainer)).
 
 ## Usage
 
@@ -117,7 +117,7 @@ Failure is an MCP tool error (`isError: true`) with:
 
 `elicitation_unsupported` belongs to a feature not built yet and doesn't occur today.
 
-With `schema`, throng gives the nested session a small MCP server, `throng_result`, with one tool, `submit_result`, and tells the agent to finish by calling it with a result matching the schema (the schema goes into the prompt verbatim). The tool validates with ajv and returns the errors to the agent, which fixes the result within the same turn. A turn that ends without a valid result gets a corrective prompt, at most 2; then the call fails with `structured_missing` or `structured_invalid`, carrying `text` (what the agent said) and `session_id`, so you can `resume_thronglet` the session. A schema ajv can't compile is rejected as invalid input before anything starts.
+With `schema`, throng gives the nested session a small MCP server, `throng_result`, with one tool, `submit_result`, and tells the agent to finish by calling it. The schema is the tool's input schema (wrapped under `result`, `$defs` / `definitions` hoisted to the root), so the prompt doesn't repeat it. A permission request for `submit_result` is always allowed, whatever the policy. The tool validates with ajv and returns the errors to the agent, which fixes the result within the same turn. A turn that ends without a valid result gets a corrective prompt, at most 2; then the call fails with `structured_missing` or `structured_invalid`, carrying `text` (what the agent said) and `session_id`, so you can `resume_thronglet` the session. A schema ajv can't compile is rejected as invalid input before anything starts.
 
 Where the fields come from: `text` is the concatenated agent message chunks of the last turn; `session_id` is the ACP session id the adapter returned; `usage` tokens come from the prompt response (summed over turns), `cost_usd` from the adapter's usage updates (claude and opencode report cost, codex doesn't).
 
@@ -189,10 +189,12 @@ Auth: the nested harness uses whatever login its CLI has. If `claude auth status
 Runs one real task against a real harness with your env, config and cache. Spends tokens; one harness at a time.
 
 ```bash
-pnpm smoke:claude       # claude/haiku
-pnpm smoke:codex        # codex/gpt-6-luna
-pnpm smoke:codex-schema # codex/gpt-6-luna with --schema (structured output)
-pnpm smoke:opencode     # opencode/openrouter/z-ai/glm-5.3-flash (needs openrouter configured in opencode)
+pnpm smoke:claude          # claude/sonnet
+pnpm smoke:claude-schema   # claude/sonnet with --schema (structured output)
+pnpm smoke:codex           # codex/gpt-6-luna
+pnpm smoke:codex-schema    # codex/gpt-6-luna with --schema
+pnpm smoke:opencode        # opencode/openrouter/z-ai/glm-5.3-flash (needs openrouter configured in opencode)
+pnpm smoke:opencode-schema # opencode/openrouter/z-ai/glm-5.3-flash with --schema
 pnpm smoke opencode/<provider>/<model>                  # custom provider
 pnpm smoke:claude -- --prompt "…" --cwd /some/dir --timeout 600
 pnpm smoke:claude -- --no-resume                       # skip the resume step

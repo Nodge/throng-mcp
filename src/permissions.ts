@@ -38,6 +38,19 @@ export const decideReject: Decide = request => {
     return Promise.resolve(option ? { outcome: 'selected', optionId: option.optionId } : CANCELLED);
 };
 
+/** A request for throng's own `submit_result` (DESIGN §6); titles differ per harness, e.g. `mcp.throng_result.submit_result`. */
+export function isThrongResultCall(toolCall: RequestPermissionRequest['toolCall']): boolean {
+    const title = toolCall.title ?? '';
+    return title.includes('throng_result') && title.includes('submit_result');
+}
+
+/** `allow_once` for our own submit_result under every policy; `undefined` → the policy decides. */
+function allowOwnTool(request: RequestPermissionRequest): Outcome | undefined {
+    if (!isThrongResultCall(request.toolCall)) return undefined;
+    const option = request.options.find(o => o.kind === 'allow_once');
+    return option ? { outcome: 'selected', optionId: option.optionId } : undefined;
+}
+
 function deciderFor(policy: PermissionPolicy): Decide {
     // allow_all / deny_all / elicit arrive in v2; until then anything but `auto` is refused before spawn.
     return policy === 'auto' ? decideReject : () => Promise.resolve(CANCELLED);
@@ -62,10 +75,8 @@ export function createPermissionBridge(
 
     return {
         async answer(request) {
-            let outcome: Outcome;
-            if (controller.signal.aborted) {
-                outcome = CANCELLED;
-            } else {
+            let outcome = controller.signal.aborted ? CANCELLED : allowOwnTool(request);
+            if (!outcome) {
                 let settle!: (outcome: Outcome) => void;
                 const cancelled = new Promise<Outcome>(resolve => (settle = resolve));
                 pending.add(settle);

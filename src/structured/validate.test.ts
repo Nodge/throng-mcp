@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileSchema } from './validate.ts';
+import { compileSchema, toolInputSchema } from './validate.ts';
 
 const body = { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'] };
 
@@ -71,5 +71,42 @@ describe('compileSchema', () => {
             properties: { mail: { type: 'string', format: 'email' }, when: { type: 'string', format: 'nope' } },
         });
         expect(compiled.validate({ mail: 'not a mail', when: 'x' })).toStrictEqual({ ok: true });
+    });
+});
+
+describe('toolInputSchema', () => {
+    it('wraps the schema under a required `result`, drops $schema', () => {
+        expect(toolInputSchema({ $schema: 'https://json-schema.org/draft/2020-12/schema', ...body })).toStrictEqual({
+            type: 'object',
+            properties: { result: body },
+            required: ['result'],
+        });
+    });
+
+    it('hoists $defs and definitions to the root, so the wrapper resolves the refs', () => {
+        const defs = { name: { type: 'string' } };
+        const legacy = { tag: { type: 'number' } };
+        const schema = {
+            type: 'object',
+            properties: { a: { $ref: '#/$defs/name' }, b: { $ref: '#/definitions/tag' } },
+            $defs: defs,
+            definitions: legacy,
+        };
+        const wrapped = toolInputSchema(schema);
+        expect(wrapped).toStrictEqual({
+            type: 'object',
+            properties: { result: { type: 'object', properties: schema.properties } },
+            required: ['result'],
+            $defs: defs,
+            definitions: legacy,
+        });
+        expect(schema.$defs, 'input not mutated').toBe(defs);
+
+        const compiled = compileSchema(wrapped);
+        expect(compiled.validate({ result: { a: 'x', b: 1 } })).toStrictEqual({ ok: true });
+        expect(compiled.validate({ result: { a: 1, b: 1 } })).toStrictEqual({
+            ok: false,
+            errors: 'result/result/a must be string',
+        });
     });
 });

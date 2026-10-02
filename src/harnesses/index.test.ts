@@ -203,12 +203,8 @@ describe('mapEffort', () => {
 describe('permissionSetup', () => {
     const policies: PermissionPolicy[] = ['auto', 'allow_all', 'deny_all', 'elicit'];
     const ask = { env: { OPENCODE_CONFIG_CONTENT: '{"permission":"ask"}' } };
-    const submit = { claudeCode: { options: { allowedTools: ['mcp__throng_result__submit_result'] } } };
     const expected = {
-        claude: {
-            auto: { modeId: 'auto', newSessionMeta: submit },
-            other: { modeId: 'default', newSessionMeta: submit },
-        },
+        claude: { auto: { modeId: 'auto' }, other: { modeId: 'default' } },
         codex: { auto: { modeId: 'agent' }, other: { modeId: 'read-only' } },
         opencode: { auto: {}, other: ask },
     } as const;

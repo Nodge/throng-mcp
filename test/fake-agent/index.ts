@@ -25,7 +25,8 @@ export type FakeScenario =
     | 'submit-valid'
     | 'submit-invalid-then-valid'
     | 'submit-missing'
-    | 'submit-invalid-always';
+    | 'submit-invalid-always'
+    | 'submit-ask';
 
 const agentPath = fileURLToPath(new URL('./agent.ts', import.meta.url));
 

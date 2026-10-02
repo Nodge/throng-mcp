@@ -230,6 +230,15 @@ describe('runThronglet', () => {
         expectStructuredGone(tmp);
     });
 
+    it('schema: a request_permission for submit_result is allowed under auto → structured', async () => {
+        const { loaded } = fakeClaude('submit-ask');
+        const { result, tmp } = await inTmp(() =>
+            runThronglet(input('claude/fake-small', { schema: SUBMIT_SCHEMA }), makeCtx(loaded))
+        );
+        expect(ok(result).structured).toStrictEqual({ answer: 'pong' });
+        expectStructuredGone(tmp);
+    });
+
     it('schema: a rejected submit_result fixed within the turn → structured, one turn', async () => {
         const { loaded } = fakeClaude('submit-invalid-then-valid');
         const { result, tmp } = await inTmp(() =>

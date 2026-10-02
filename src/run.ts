@@ -265,7 +265,7 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
             return response;
         };
 
-        let response = await turn(buildPrompt(call.prompt, call.schema));
+        let response = await turn(buildPrompt(call.prompt, call.schema !== undefined));
         // Structured output (DESIGN §6): after each turn read submit-tool's out file; re-prompt at most twice.
         for (let corrective = 0; outPath; corrective++) {
             const state = await readSubmitState(outPath, warn);

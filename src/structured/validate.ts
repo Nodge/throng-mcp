@@ -30,3 +30,25 @@ export function compileSchema(schema: JsonSchemaObject): CompiledSchema {
                 : { ok: false, errors: ajv.errorsText(validate.errors, { separator: '; ', dataVar: 'result' }) },
     };
 }
+
+/**
+ * `submit_result`'s inputSchema: the caller's schema under `result`, its `$defs` / `definitions` hoisted to the root so
+ * `#/$defs/…` and `#/definitions/…` refs keep resolving. `$schema` is dropped.
+ */
+export function toolInputSchema(schema: JsonSchemaObject): {
+    type: 'object';
+    properties: { result: JsonSchemaObject };
+    required: string[];
+    $defs?: unknown;
+    definitions?: unknown;
+} {
+    const { $defs, definitions, ...result } = schema;
+    delete result.$schema;
+    return {
+        type: 'object',
+        properties: { result },
+        required: ['result'],
+        ...($defs === undefined ? {} : { $defs }),
+        ...(definitions === undefined ? {} : { definitions }),
+    };
+}

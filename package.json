@@ -19,10 +19,12 @@
         "ci:typecheck": "tsc --noEmit",
         "ci:tests": "vitest --run",
         "smoke": "node scripts/smoke/smoke.ts",
-        "smoke:claude": "node scripts/smoke/smoke.ts claude/haiku",
+        "smoke:claude": "node scripts/smoke/smoke.ts claude/sonnet",
+        "smoke:claude-schema": "node scripts/smoke/smoke.ts claude/sonnet --schema",
         "smoke:codex": "node scripts/smoke/smoke.ts codex/gpt-6-luna",
         "smoke:codex-schema": "node scripts/smoke/smoke.ts codex/gpt-6-luna --schema",
-        "smoke:opencode": "node scripts/smoke/smoke.ts opencode/openrouter/z-ai/glm-5.3-flash"
+        "smoke:opencode": "node scripts/smoke/smoke.ts opencode/openrouter/z-ai/glm-5.3-flash",
+        "smoke:opencode-schema": "node scripts/smoke/smoke.ts opencode/openrouter/z-ai/glm-5.3-flash --schema"
     },
     "dependencies": {
         "@agentclientprotocol/sdk": "^1.5.0",

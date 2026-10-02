@@ -225,6 +225,28 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
             await submit(session, INVALID_SUBMIT);
             await say(`turn ${session.prompts}`);
             return;
+        case 'submit-ask': {
+            // Like a harness that asks before an MCP tool: submits only if throng allows it.
+            const answer = await client.request(acp.methods.client.session.requestPermission, {
+                sessionId,
+                toolCall: {
+                    toolCallId: 't3',
+                    title: 'mcp.throng_result.submit_result',
+                    kind: 'other',
+                    status: 'pending',
+                },
+                options: [
+                    { optionId: 'approve', name: 'Allow', kind: 'allow_once' },
+                    { optionId: 'decline', name: 'Reject', kind: 'reject_once' },
+                ],
+            });
+            if (answer.outcome.outcome !== 'selected' || answer.outcome.optionId !== 'approve') {
+                await say('denied');
+                return;
+            }
+            await submit(session, VALID_SUBMIT);
+            return;
+        }
         case 'hang':
             await new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled'))));
             return;
