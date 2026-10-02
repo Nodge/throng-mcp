@@ -16,9 +16,11 @@ const inputSchema = {
         ),
 };
 
+export const name = 'wait_thronglet';
+
 export function register(server: McpServer, env: ToolEnv): void {
     server.registerTool(
-        'wait_thronglet',
+        name,
         {
             description:
                 "Waits until a session has no running or queued turn and returns the last turn's result: the same JSON as " +

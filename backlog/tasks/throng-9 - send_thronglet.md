@@ -5,7 +5,7 @@ status: Review
 assignee:
   - '@nodge'
 created_date: '2026-09-28 15:33'
-updated_date: '2026-10-02 10:28'
+updated_date: '2026-10-02 12:14'
 labels: []
 milestone: m-1
 dependencies:
@@ -112,6 +112,8 @@ Concurrent second `session/prompt` while a turn runs: in all three adapters the 
 Steer = `session/cancel` then prompt B: works on all three. A resolves `cancelled` within 0.3 s; B gets a reply that remembers the interrupted work ("B-ACK running `sleep 25`, interrupted before it finished" on codex; equivalent on claude and opencode). Cost: the in-flight tool call is aborted.
 
 task-cycle wf_29fa48f5-bcd: Opus coder, gates green (189 tests), Opus review 0 findings, Codex review 1 finding (f1, major: the queue timeout test asserted a `queued N s` warning with a 28-41 ms margin over QUEUE_WARNING_MS) → confirmed, fixed (A holds the session with timeout_s: 2, margin ~1 s), verified by a separate Opus. Spot-checked by the main session: src/registry.ts (SessionRegistry: Semaphore(1) per id, users count, entry dropped at zero, acquire rejects `cancelled` with its own message), run.ts lock sites (send_message: after guards, before the semaphore, inside the queued window; run_thronglet: right after sessionId is known, before writeSessionRecord), release via the new RunLifecycle.whenGone after close + touch. Coder deviations accepted: old-record fallback (description "") lives in readSessionRecord; Semaphore got an optional cancel message; lock taken after guards so a failing call never queues; shutdown path (queued call wins the lock during shutdown → startWorker refuses with cancelled) not covered by a test. Gates re-run by the main session: tsc 0, eslint 0, vitest 18 files / 189 tests.
+
+Smoke 2026-10-02 (maintainer): pnpm smoke:claude — claude/sonnet run 4.7 s → "done", pong.txt written, send_message 2.4 s → "pong.txt", no orphans. SMOKE PASSED. AC #5 still needs codex and opencode.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

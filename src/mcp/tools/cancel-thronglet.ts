@@ -4,9 +4,11 @@ import { cancelThronglet, stopBoundMs } from '../../cancel.ts';
 import { errorResult, jsonResult } from '../result.ts';
 import type { ToolEnv } from '../tools.ts';
 
+export const name = 'cancel_thronglet';
+
 export function register(server: McpServer, env: ToolEnv): void {
     server.registerTool(
-        'cancel_thronglet',
+        name,
         {
             description:
                 "Cancels the session's running turn (session/cancel) and drops its queued messages; a pending wait_thronglet " +

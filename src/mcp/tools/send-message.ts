@@ -45,9 +45,11 @@ export function sendMessage(input: SendMessageInput, ctx: RunContext): Promise<R
     );
 }
 
+export const name = 'send_message';
+
 export function register(server: McpServer, env: ToolEnv): void {
     server.registerTool(
-        'send_message',
+        name,
         {
             description:
                 'Sends the next message into an earlier session (session_id from run_thronglet) and returns the same JSON ' +

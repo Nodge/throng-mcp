@@ -13,6 +13,11 @@ import * as runThronglet from './tools/run-thronglet.ts';
 import * as sendMessage from './tools/send-message.ts';
 import * as waitThronglet from './tools/wait-thronglet.ts';
 
+const TOOLS = [cancelThronglet, listHarnesses, listThronglets, runThronglet, sendMessage, waitThronglet];
+
+/** Every tool name registerTools registers. */
+export const TOOL_NAMES: readonly string[] = TOOLS.map(tool => tool.name);
+
 export interface ToolDeps {
     loaded: LoadedConfig;
     /** One per process (DESIGN §7). */
@@ -90,9 +95,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): Tools {
         },
     };
 
-    for (const tool of [cancelThronglet, listHarnesses, listThronglets, runThronglet, sendMessage, waitThronglet]) {
-        tool.register(server, env);
-    }
+    for (const tool of TOOLS) tool.register(server, env);
 
     return {
         drain: async () => {

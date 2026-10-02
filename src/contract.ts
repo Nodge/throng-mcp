@@ -98,24 +98,26 @@ export interface ListHarnessesOutput {
     };
 }
 
-/** Failure codes of `run_thronglet` / `send_message` (DESIGN §3.2). */
-export type ErrorCode =
-    | 'harness_unavailable'
-    | 'depth_exceeded'
-    | 'elicitation_unsupported'
-    | 'session_not_found'
-    | 'spawn_failed'
-    | 'handshake_timeout'
-    | 'handshake_failed'
-    | 'model_rejected'
-    | 'timeout'
-    | 'cancelled'
-    | 'transport_lost'
-    | 'empty_result'
-    | 'structured_missing'
-    | 'structured_invalid'
-    | 'refusal'
-    | 'agent_error';
+/** Failure codes of `run_thronglet` / `send_message` / `wait_thronglet` / `cancel_thronglet` (DESIGN §3.2). */
+export const ERROR_CODES = [
+    'harness_unavailable',
+    'depth_exceeded',
+    'elicitation_unsupported',
+    'session_not_found',
+    'spawn_failed',
+    'handshake_timeout',
+    'handshake_failed',
+    'model_rejected',
+    'timeout',
+    'cancelled',
+    'transport_lost',
+    'empty_result',
+    'structured_missing',
+    'structured_invalid',
+    'refusal',
+    'agent_error',
+] as const;
+export type ErrorCode = (typeof ERROR_CODES)[number];
 
 /** Everything a failed run knows besides the code and the message: partial results the caller can still use. */
 export interface FailureContext {

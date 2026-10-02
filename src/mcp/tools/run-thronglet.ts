@@ -75,9 +75,11 @@ export function runThronglet(input: RunThrongletInput, ctx: RunContext): Promise
     );
 }
 
+export const name = 'run_thronglet';
+
 export function register(server: McpServer, env: ToolEnv): void {
     server.registerTool(
-        'run_thronglet',
+        name,
         {
             description:
                 'Runs a coding agent (Claude Code, Codex, OpenCode) on a task in cwd and returns its final message as JSON ' +

@@ -3,9 +3,11 @@ import { listThronglets } from '../../list-thronglets.ts';
 import { jsonResult } from '../result.ts';
 import type { ToolEnv } from '../tools.ts';
 
+export const name = 'list_thronglets';
+
 export function register(server: McpServer, env: ToolEnv): void {
     server.registerTool(
-        'list_thronglets',
+        name,
         {
             description:
                 'Lists thronglet sessions on this machine: description, agent, cwd, state (running | queued | idle | failed), ' +

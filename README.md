@@ -39,6 +39,16 @@ Tool names in Claude Code: `mcp__throng__run_thronglet`, `mcp__throng__send_mess
 
 Check the setup: ask Claude to call `list_harnesses` (each installed adapter is started without a prompt, so it costs no tokens), or run `pnpm smoke claude/sonnet` from the repo (spends a few tokens, see [Smoke](#smoke-maintainer)).
 
+## Skill
+
+`skills/throng` is a skill for the calling agent: working patterns for when to delegate, writing the prompt, background turns and `wait_thronglet`, follow-ups, `steer`, housekeeping, structured output and permissions. Install it for every project (user scope):
+
+```bash
+mkdir -p ~/.claude/skills && ln -s "$(pwd)/skills/throng" ~/.claude/skills/throng
+```
+
+Run it from the repo root yourself; throng doesn't touch `~/.claude`. Claude Code picks skills up from `~/.claude/skills` at session start, so start a new session after linking.
+
 ## Usage
 
 ### Agent spec
@@ -297,5 +307,5 @@ Record the adapter versions `list_harnesses` reported in the backlog task notes.
 ## Development
 
 - Gates: `pnpm typecheck && pnpm lint && pnpm test`. The pre-commit hook (lefthook, installed by `pnpm install`) formats with prettier, runs `eslint --fix` and typecheck.
-- Tests are vitest, next to the code (`src/**/*.test.ts`). They drive `test/fake-agent` (an ACP agent with scripted scenarios) and never call an LLM; real harnesses only in `scripts/smoke/`, run by hand.
+- Tests are vitest, next to the code (`src/**/*.test.ts`). They drive `test/fake-agent` (an ACP agent with scripted scenarios) and never call an LLM; real harnesses only in `scripts/smoke/`, run by hand. `src/skill.test.ts` keeps `skills/throng/SKILL.md` to the existing tool names and error codes.
 - Design: [docs/DESIGN.md](docs/DESIGN.md). Process: [AGENTS.md](AGENTS.md).

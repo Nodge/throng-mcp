@@ -5,7 +5,7 @@ status: Review
 assignee:
   - '@nodge'
 created_date: '2026-10-02 09:53'
-updated_date: '2026-10-02 11:29'
+updated_date: '2026-10-02 12:15'
 labels: []
 milestone: m-1
 dependencies:
@@ -119,6 +119,8 @@ Report in `summary`: how the cancel reaches synchronous turns and queued waiters
 
 <!-- SECTION:NOTES:BEGIN -->
 task-cycle wf_bed15720-4b6: Opus coder, gates green (232 tests), Opus review 2 findings, Codex review 1. Confirmed and fixed (verified by a separate Opus): f3 (Codex, major) a cancel arriving during the holder teardown (after the outcome was fixed, before the lock release) reported cancelled_turn: true while the record kept last_result → runCall detaches its controller the moment the outcome is fixed, cancel returns cancelled_turn: false when no controller is left, and a cancel that aborted before the outcome was fixed overrides an ok outcome with cancelled so reply and record agree; f1 (Opus, minor) stop bound ignored a lingering handshake → bound = max(handshake_s, cancelGrace) + 3×exitGrace + 5 s (80 s with defaults). Deferred minor: a send_message that joins the queue after cancel took its snapshot of controllers is not aborted and cancel waits for it (a race the caller creates by sending concurrently with its own cancel; whether such messages should be dropped is a design question). Coder deviations accepted: 3×exitGrace in the bound (worker close waits exitGrace three times); a new session between handshake and record write is not listed; smoke --cancel skips the pong.txt check and always runs in background; run.test "new session is busy" hardened to wait for a .json file (an atomic-write temp file was the likely flake). Spot-checked by the main session: src/run.ts (cancel controller + AbortSignal.any, lockSession attaches before awaiting acquire, detach at outcome), src/cancel.ts, src/session-state.ts (shared resolver for wait/list/cancel). Gates re-run: tsc 0, eslint 0, vitest 22 files / 232 tests.
+
+Smoke 2026-10-02 (maintainer): pnpm smoke:claude -- --cancel — background run accepted, list_thronglets shows the row running with description "smoke: ping/pong", cancel_thronglet → cancelled_turn: true (turn ended cancelled in 0.6 s), wait_thronglet → cancelled "cancelled by cancel_thronglet", list shows failed with last_error cancelled; no orphans. SMOKE PASSED on claude/sonnet; codex and opencode pending for AC #6.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

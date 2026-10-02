@@ -5,7 +5,7 @@ status: Review
 assignee:
   - '@nodge'
 created_date: '2026-10-02 09:53'
-updated_date: '2026-10-02 11:51'
+updated_date: '2026-10-02 12:15'
 labels: []
 milestone: m-1
 dependencies:
@@ -104,6 +104,8 @@ Report in `summary`: the registry API after the change, exactly where the holder
 
 <!-- SECTION:NOTES:BEGIN -->
 task-cycle wf_4a884afd-91a: Opus coder, gates green (244 tests), Opus review 3 minor findings, Codex review 1 ("major", triaged as message-only); all four deferred by triage. Applied by the main session afterwards: (f3) steer does not abort the holder when the steer call itself is already cancelled; (f4) a cancel_thronglet / steer abort names itself in the cancelled payload whichever wait it interrupted (the slot-wait message is replaced; cancel.test expectation updated); (f1) fake steer scenario checks signal.aborted before attaching its abort listener; (f2) two steers in a row run newest first, written into DESIGN §3.3. Coder deviations accepted: registry acquire takes an options object with the controller, holder/waiters tracked explicitly, attachTurn removed; onQueued reports position 1 for a front acquire; smoke --steer STEERED check passes on the fake because the reply repeats the prompt (a real harness repeating the prompt would pass too). Spot-checked by the main session: run.ts (holder abort right before lockSession with front, reason-aware cancel message), registry.ts. Gates after the fixes: tsc 0, eslint 0, vitest 23 files / 244 tests.
+
+Smoke 2026-10-02 (maintainer): pnpm smoke:claude -- --steer — background run (sleep 60 prompt) accepted, send_message steer: the running turn ended cancelled in 0.6 s, the steer turn answered in 3.9 s: "STEERED running `sleep 60` before writing pong.txt with \"pong\"." (the agent remembers the interrupted work), list_thronglets shows idle; no orphans. SMOKE PASSED on claude/sonnet; codex and opencode pending for AC #5.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

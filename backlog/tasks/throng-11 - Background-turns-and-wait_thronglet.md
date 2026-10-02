@@ -5,7 +5,7 @@ status: Review
 assignee:
   - '@nodge'
 created_date: '2026-10-02 09:53'
-updated_date: '2026-10-02 10:58'
+updated_date: '2026-10-02 12:14'
 labels: []
 milestone: m-1
 dependencies:
@@ -117,6 +117,8 @@ Report in `summary`: the exact record shape, the acceptance race in `startBackgr
 
 <!-- SECTION:NOTES:BEGIN -->
 task-cycle wf_ccd9901e-b4c: Opus coder, gates green (218 tests), Opus review 3 findings, Codex review 2. Confirmed and fixed (verified by a separate Opus): f1 callBackground ignored the client call (no progress/heartbeat while a background run_thronglet waited for a slot or handshake; a dropped call still ran a full turn) → progress forwarded until acceptance, client cancel aborts the detached run only before acceptance; f2 a background send_message waiting for a semaphore slot was accepted as queued:0 → Progress.queued carries behind: session|slot, only the session wait accepts as queued. Deferred minor: registry.idle() resolvers of timed-out waits stay until the session ends (memory only). Applied by the main session: at startup a record with turn_pid === process.pid counts as gone (recycled pid; was deferred f3), test adjusted to use process.ppid as the live foreign pid. Coder deviations accepted: failures before the session lock (guards, cancel while queued, missing record) are not written to the record, only the lock holder writes turn fields (DESIGN §8 updated to say so); own-pid + not-busy record is marked transport_lost "turn ended without recording its result"; attachTurn returns detach and also covers queued background turns (hook for THRONG-12 cancel); loadRecord moved to sessions.loadSessionRecord; src/mcp/result.ts, test/fake-harness.ts, Semaphore.active added. Known limits recorded by the coder: wait on a turn in another server process reports state running without that process queue length; two server processes running turns on one session can still race on the record. DESIGN §3.7/§8 updated by the main session: turn_pid, pid-based startup marking, lock-holder-only writes. Gates re-run after the fix: tsc 0, eslint 0, vitest 20 files / 218 tests.
+
+Smoke 2026-10-02 (maintainer): pnpm smoke:claude -- --background — run_thronglet accepted as running, wait_thronglet → "done" 8.3 s, pong.txt written; send_message background accepted as running, wait_thronglet → "pong.txt" 4.1 s; no orphans. SMOKE PASSED on claude/sonnet. AC #7 (two harnesses from one session) is dogfood from a real session, still open.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

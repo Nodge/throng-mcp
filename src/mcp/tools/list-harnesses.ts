@@ -3,9 +3,11 @@ import { readDepth } from '../../config.ts';
 import { listHarnesses } from '../../list.ts';
 import type { ToolEnv } from '../tools.ts';
 
+export const name = 'list_harnesses';
+
 export function register(server: McpServer, env: ToolEnv): void {
     server.registerTool(
-        'list_harnesses',
+        name,
         {
             description:
                 'Lists valid agent values for run_thronglet: available harnesses with their models and effort levels, ' +
