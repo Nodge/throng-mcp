@@ -116,6 +116,8 @@ Smoke 2026-10-01 (maintainer): pnpm smoke:codex-schema — codex/gpt-6-luna run 
 Sherpa review 2026-10-02 (maintainer), commit 2acc7e7: schema moved from the prompt into submit_result's inputSchema (low-level MCP Server, defs hoisted, ajv still the only validator so invalid/missing stays); submit_result answered allow_once under every policy in permissions.ts, claude allowedTools _meta removed; smoke:claude-schema and smoke:opencode-schema added; claude smoke on sonnet. Gates: tsc 0, eslint 0, vitest 180/180. Schema smoke on real harnesses not re-run after these changes.
 
 Smoke 2026-10-02 (maintainer) after the review fixes: pnpm smoke:claude-schema — claude/sonnet run 16.7 s, submit_result called once (schema from the tool's inputSchema, no allowedTools), structured {file: pong.txt, content: pong}, resume 2.5 s → 'pong.txt', no orphans. SMOKE PASSED.
+
+Smoke 2026-10-02 after the review fixes: pnpm smoke:codex-schema — codex/gpt-6-luna run 23 s, submit_result once, structured {file: pong.txt, content: pong}, resume 10 s → 'pong.txt', no orphans. SMOKE PASSED.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
