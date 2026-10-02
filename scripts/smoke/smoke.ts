@@ -8,16 +8,17 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { parseAgentSpec } from '../../src/agent-spec.ts';
-import type { ListHarnessesOutput, RunFailure, RunSuccess } from '../../src/contract.ts';
+import type { ListHarnessesOutput, RunFailure, RunSuccess, TurnPending } from '../../src/contract.ts';
 
 // Manual smoke against a REAL harness (DESIGN §9): starts `node src/mcp.ts` with the user's own env, config and cache,
 // runs list_harnesses and one run_thronglet, checks the file the agent wrote, asks a send_message follow-up about it,
 // and checks that no adapter process is left. With --schema the run_thronglet step asks for structured output
-// (DESIGN §6) and checks `structured` as well.
+// (DESIGN §6) and checks `structured` as well. With --background both turns run with `background: true` (DESIGN §3.6):
+// the pending answer is printed and the result is collected with wait_thronglet, then checked the same way.
 // Spends tokens: run by hand, one harness at a time. Exit: 0 pass, 1 any FAIL or tool error, 2 usage/availability.
 
 const USAGE =
-    'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-follow-up] [--schema]';
+    'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-follow-up] [--schema] [--background]';
 const DEFAULT_PROMPT =
     'Create a file named pong.txt in the current directory containing exactly the word pong (no newline needed), then reply with the single word: done.';
 const SCHEMA_PROMPT =
@@ -61,6 +62,7 @@ try {
             timeout: { type: 'string' },
             'no-follow-up': { type: 'boolean' },
             schema: { type: 'boolean' },
+            background: { type: 'boolean' },
         },
     });
 } catch (err) {
@@ -127,6 +129,41 @@ function printResult(result: Record<string, unknown>): { isError: boolean; paylo
     console.log(`   text: ${JSON.stringify((payload.text ?? '').slice(0, 400))}`);
     if (payload.structured !== undefined) console.log(`   structured: ${JSON.stringify(payload.structured)}`);
     return { isError, payload };
+}
+
+const withBackground = values.background === true;
+
+/**
+ * One turn: `run_thronglet` / `send_message` as is, or with --background the call with `background: true`, its pending
+ * answer printed, then `wait_thronglet` for the result. A failed background call is returned as the result.
+ */
+async function turn(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const options = {
+        onprogress: (p: { progress: number; message?: string | undefined }) =>
+            void process.stderr.write(`[progress] ${p.progress} ${p.message ?? ''}\n`),
+        // The run's own timeout_s decides; the SDK's 60 s request default must not cut it short.
+        timeout: (timeoutS + 60) * 1000,
+    };
+    if (!withBackground) return client.callTool({ name, arguments: args }, CallToolResultSchema, options);
+    const accepted = await client.callTool({ name, arguments: { ...args, background: true } }, CallToolResultSchema, {
+        ...options,
+        // Acceptance: the handshake, plus a possible wait for a semaphore slot.
+        timeout: 300_000,
+    });
+    if (accepted.isError === true) return accepted;
+    const pending = JSON.parse(textOf(accepted)) as Partial<TurnPending>;
+    console.log(`   pending: ${textOf(accepted)}`);
+    check(
+        typeof pending.session_id === 'string' && (pending.state === 'running' || pending.state === 'queued'),
+        `${name} background accepted`,
+        `${name} background answered ${textOf(accepted).slice(0, 200)}, expected {session_id, state, queued}`
+    );
+    say(`wait_thronglet session_id=${pending.session_id} timeout_s=${timeoutS}`);
+    return client.callTool(
+        { name: 'wait_thronglet', arguments: { session_id: pending.session_id, timeout_s: timeoutS } },
+        CallToolResultSchema,
+        options
+    );
 }
 
 function table(rows: string[][]): string {
@@ -213,26 +250,17 @@ try {
             createdCwd = true;
         }
         const withSchema = values.schema === true;
-        say(`run_thronglet agent=${agent} cwd=${cwd} timeout_s=${timeoutS}${withSchema ? ' schema' : ''}`);
-        const result = await client.callTool(
-            {
-                name: 'run_thronglet',
-                arguments: {
-                    agent,
-                    prompt: values.prompt ?? (withSchema ? SCHEMA_PROMPT : DEFAULT_PROMPT),
-                    description: 'smoke: ping/pong',
-                    cwd,
-                    timeout_s: timeoutS,
-                    ...(withSchema ? { schema: SMOKE_SCHEMA } : {}),
-                },
-            },
-            CallToolResultSchema,
-            {
-                onprogress: p => void process.stderr.write(`[progress] ${p.progress} ${p.message ?? ''}\n`),
-                // The run's own timeout_s decides; the SDK's 60 s request default must not cut it short.
-                timeout: (timeoutS + 60) * 1000,
-            }
+        say(
+            `run_thronglet agent=${agent} cwd=${cwd} timeout_s=${timeoutS}${withSchema ? ' schema' : ''}${withBackground ? ' background' : ''}`
         );
+        const result = await turn('run_thronglet', {
+            agent,
+            prompt: values.prompt ?? (withSchema ? SCHEMA_PROMPT : DEFAULT_PROMPT),
+            description: 'smoke: ping/pong',
+            cwd,
+            timeout_s: timeoutS,
+            ...(withSchema ? { schema: SMOKE_SCHEMA } : {}),
+        });
 
         say('result');
         const { isError, payload } = printResult(result);
@@ -270,18 +298,14 @@ try {
         } else if (isError || !payload.session_id) {
             console.log('   follow-up step skipped: run_thronglet failed');
         } else {
-            say(`send_message session_id=${payload.session_id} timeout_s=${timeoutS}`);
-            const sent = await client.callTool(
-                {
-                    name: 'send_message',
-                    arguments: { session_id: payload.session_id, prompt: FOLLOW_UP_PROMPT, timeout_s: timeoutS },
-                },
-                CallToolResultSchema,
-                {
-                    onprogress: p => void process.stderr.write(`[progress] ${p.progress} ${p.message ?? ''}\n`),
-                    timeout: (timeoutS + 60) * 1000,
-                }
+            say(
+                `send_message session_id=${payload.session_id} timeout_s=${timeoutS}${withBackground ? ' background' : ''}`
             );
+            const sent = await turn('send_message', {
+                session_id: payload.session_id,
+                prompt: FOLLOW_UP_PROMPT,
+                timeout_s: timeoutS,
+            });
             const follow = printResult(sent);
             const text = follow.payload.text ?? '';
             check(

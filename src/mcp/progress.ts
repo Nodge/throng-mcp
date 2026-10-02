@@ -40,6 +40,7 @@ class McpProgress implements Progress {
     #lastText = -Infinity;
     #queuedAt: number | undefined;
     #startedAt: number | undefined;
+    #waitingAt: number | undefined;
     #timer: NodeJS.Timeout | undefined;
 
     constructor(extra: ProgressExtra, token: string | number, options: ProgressOptions) {
@@ -58,6 +59,11 @@ class McpProgress implements Progress {
 
     started(): void {
         this.#startedAt = this.#now();
+        this.#ensureHeartbeat();
+    }
+
+    waiting(): void {
+        this.#waitingAt = this.#now();
         this.#ensureHeartbeat();
     }
 
@@ -97,7 +103,8 @@ class McpProgress implements Progress {
     }
 
     #beat(): void {
-        if (this.#startedAt !== undefined) this.#send(`running ${formatElapsed(this.#now() - this.#startedAt)}`);
+        if (this.#waitingAt !== undefined) this.#send(`waiting ${formatElapsed(this.#now() - this.#waitingAt)}`);
+        else if (this.#startedAt !== undefined) this.#send(`running ${formatElapsed(this.#now() - this.#startedAt)}`);
         else if (this.#queuedAt !== undefined) this.#send(`queued ${formatElapsed(this.#now() - this.#queuedAt)}`);
     }
 

@@ -19,6 +19,11 @@ export class Semaphore {
         this.#cancelMessage = cancelMessage;
     }
 
+    /** Slots taken. */
+    get active(): number {
+        return this.#active;
+    }
+
     /** Callers queued behind the running ones. */
     get waiting(): number {
         return this.#queue.length;

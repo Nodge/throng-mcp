@@ -7,7 +7,7 @@ import { log } from './log.ts';
 import { registerTools } from './mcp/tools.ts';
 import { SessionRegistry } from './registry.ts';
 import { Semaphore } from './semaphore.ts';
-import { cacheDir, rotate } from './sessions.ts';
+import { cacheDir, markInterrupted, rotate } from './sessions.ts';
 
 // Entry point: `node src/mcp.ts`. stdout belongs to the MCP transport; logs go to stderr.
 
@@ -20,6 +20,7 @@ if (loaded.error) log.error('config error: run_thronglet refuses to run until it
 
 const cache = cacheDir();
 await rotate(cache);
+await markInterrupted(cache);
 
 const server = new McpServer({ name: 'throng', version });
 const tools = registerTools(server, {

@@ -1,10 +1,15 @@
 // What a run reports while it works (DESIGN §7). The MCP implementation is src/mcp/progress.ts.
 
 export interface Progress {
-    /** Waiting for the semaphore at `position`; also keeps the heartbeat going while queued. */
-    queued(position: number): void;
+    /**
+     * Waiting at `position` behind the session's running turn (`session`) or for a semaphore slot (`slot`); also keeps
+     * the heartbeat going while queued.
+     */
+    queued(position: number, behind: 'session' | 'slot'): void;
     /** The run itself began: heartbeat with the elapsed time from here on. */
     started(): void;
+    /** wait_thronglet: waiting for the session's turns to finish; heartbeat with the elapsed time until `done`. */
+    waiting(): void;
     /** Every `tool_call`. */
     tool(title: string): void;
     /** Agent text of the current turn has `chars` characters; throttled. */
@@ -20,6 +25,9 @@ export const noProgress: Progress = {
         /* no-op */
     },
     started: () => {
+        /* no-op */
+    },
+    waiting: () => {
         /* no-op */
     },
     tool: () => {

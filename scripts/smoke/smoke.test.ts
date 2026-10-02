@@ -123,6 +123,25 @@ describe('smoke script against the fake agent', () => {
         expect(tagAlive(tag), 'fake agent left running').toBe(false);
     });
 
+    it('--background: both turns accepted as pending, results collected with wait_thronglet', async () => {
+        const { code, stdout, stderr, tag } = await smoke(
+            ['claude/fake-small', '--prompt', 'x', '--background'],
+            'write-pong'
+        );
+        expect(code, stdout + stderr).toBe(0);
+        expect(stdout).toMatch(/run_thronglet agent=claude\/fake-small .* background$/m);
+        expect(stdout).toMatch(/pending: \{"session_id":"fake-[0-9a-f-]+","state":"running","queued":0\}/);
+        expect(stdout).toMatch(/PASS: run_thronglet background accepted/);
+        expect(stdout).toMatch(/^\d+\. wait_thronglet session_id=fake-/m);
+        expect(stdout).toMatch(/PASS: pong\.txt written/);
+        expect(stdout).toMatch(/^\d+\. send_message session_id=fake-.* background$/m);
+        expect(stdout).toMatch(/PASS: send_message background accepted/);
+        expect(stdout).toMatch(/PASS: send_message answered pong\.txt/);
+        expect(stdout).toMatch(/PASS: no orphans/);
+        expect(stdout).not.toMatch(/FAIL/);
+        expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
+
     it('--no-follow-up skips the send_message step', async () => {
         const { code, stdout, stderr, tag } = await smoke(
             ['claude/fake-small', '--prompt', 'x', '--no-follow-up'],

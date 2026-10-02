@@ -2,10 +2,45 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, wr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { cacheDir, readSessionRecord, rotate, touchSessionRecord, writeSessionRecord } from './sessions.ts';
+import type { RunFailure, RunSuccess } from './contract.ts';
+import {
+    cacheDir,
+    endTurn,
+    markInterrupted,
+    pidAlive,
+    readSessionRecord,
+    rotate,
+    type SessionRecord,
+    touchSessionRecord,
+    updateSessionRecord,
+    writeSessionRecord,
+} from './sessions.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'throng-sessions-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+const base: SessionRecord = {
+    harness: 'claude',
+    model: 'fake-small',
+    cwd: '/tmp',
+    description: 'x',
+    created_at: '2026-01-01T00:00:00.000Z',
+    last_used_at: '2026-01-01T00:00:00.000Z',
+};
+const success: RunSuccess = {
+    session_id: 's',
+    text: 'done',
+    stop_reason: 'end_turn',
+    usage: {},
+    duration_s: 1,
+};
+const failure: RunFailure = { code: 'timeout', message: 'timed out after 1 s', session_id: 's', duration_s: 1 };
+
+/** A pid no process has: the largest macOS/Linux pid range ends below it, checked rather than assumed. */
+function deadPid(): number {
+    for (let pid = 2 ** 22 - 1; pid > 2 ** 21; pid--) if (!pidAlive(pid)) return pid;
+    throw new Error('no dead pid found');
+}
 
 describe('sessions', () => {
     it('cacheDir honours THRONG_MCP_CACHE_DIR', () => {
@@ -77,5 +112,75 @@ describe('sessions', () => {
         writeFileSync(join(dir, 'sessions', 'fresh.json'), '{}');
         await rotate(dir);
         expect(readdirSync(join(dir, 'sessions'))).toStrictEqual(['fresh.json']);
+    });
+
+    it('updateSessionRecord merges a patch atomically; a missing record stays missing', async () => {
+        const dir = join(root, 'upd');
+        await writeSessionRecord(dir, 'u-1', base);
+        const next = await updateSessionRecord(dir, 'u-1', {
+            turn_started_at: '2026-01-02T00:00:00.000Z',
+            turn_pid: 42,
+        });
+        expect(next).toStrictEqual({ ...base, turn_started_at: '2026-01-02T00:00:00.000Z', turn_pid: 42 });
+        expect(await readSessionRecord(dir, 'u-1')).toStrictEqual(next);
+        expect(readdirSync(join(dir, 'sessions'))).toStrictEqual(['u-1.json']);
+        expect(await updateSessionRecord(dir, 'nope', { turn_pid: 1 })).toBe(undefined);
+        expect(existsSync(join(dir, 'sessions', 'nope.json'))).toBe(false);
+    });
+
+    it('last_result and last_error replace each other, by patch and by endTurn', async () => {
+        const dir = join(root, 'excl');
+        await writeSessionRecord(dir, 'x-1', { ...base, last_result: success });
+        await updateSessionRecord(dir, 'x-1', { last_error: failure });
+        expect(await readSessionRecord(dir, 'x-1')).toStrictEqual({ ...base, last_error: failure });
+        await updateSessionRecord(dir, 'x-1', { last_result: success });
+        expect(await readSessionRecord(dir, 'x-1')).toStrictEqual({ ...base, last_result: success });
+
+        await updateSessionRecord(dir, 'x-1', { turn_started_at: '2026-01-02T00:00:00.000Z', turn_pid: 42 });
+        const at = new Date('2026-01-03T00:00:00.000Z');
+        await updateSessionRecord(dir, 'x-1', endTurn({ ok: false, payload: failure }, at));
+        expect(await readSessionRecord(dir, 'x-1')).toStrictEqual({
+            ...base,
+            last_used_at: at.toISOString(),
+            last_error: failure,
+        });
+        await updateSessionRecord(dir, 'x-1', endTurn({ ok: true, payload: success }, at));
+        expect(await readSessionRecord(dir, 'x-1')).toStrictEqual({
+            ...base,
+            last_used_at: at.toISOString(),
+            last_result: success,
+        });
+    });
+
+    it('pidAlive: our pid and pid 1 (EPERM) are alive, an unused pid is not', () => {
+        expect(pidAlive(process.pid)).toBe(true);
+        expect(pidAlive(1)).toBe(true);
+        expect(pidAlive(deadPid())).toBe(false);
+        expect(pidAlive(undefined)).toBe(false);
+    });
+
+    it('markInterrupted: a turn of a dead or recycled pid becomes transport_lost; a live pid, an idle record and junk stay', async () => {
+        const dir = join(root, 'intr');
+        const turn = { turn_started_at: '2026-01-02T00:00:00.000Z' };
+        const interrupted = {
+            ...base,
+            last_error: {
+                code: 'transport_lost',
+                message: 'turn interrupted: the throng server process that ran it is gone',
+                duration_s: 0,
+            },
+        };
+        await writeSessionRecord(dir, 'dead', { ...base, ...turn, turn_pid: deadPid(), last_result: success });
+        // At startup nothing of ours can be running: our own pid in a record means the pid was recycled.
+        await writeSessionRecord(dir, 'recycled', { ...base, ...turn, turn_pid: process.pid });
+        await writeSessionRecord(dir, 'live', { ...base, ...turn, turn_pid: process.ppid });
+        await writeSessionRecord(dir, 'idle', { ...base, last_result: success });
+        writeFileSync(join(dir, 'sessions', 'junk.json'), '{');
+        await markInterrupted(dir);
+        expect(await readSessionRecord(dir, 'dead')).toStrictEqual(interrupted);
+        expect(await readSessionRecord(dir, 'recycled')).toStrictEqual(interrupted);
+        expect(await readSessionRecord(dir, 'live')).toStrictEqual({ ...base, ...turn, turn_pid: process.ppid });
+        expect(await readSessionRecord(dir, 'idle')).toStrictEqual({ ...base, last_result: success });
+        await markInterrupted(join(root, 'no-such-dir'));
     });
 });

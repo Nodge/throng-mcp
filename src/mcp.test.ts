@@ -9,7 +9,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { ListHarnessesOutput, RunFailure, RunSuccess } from './contract.ts';
+import type { ListHarnessesOutput, RunFailure, RunSuccess, TurnPending } from './contract.ts';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'throng-mcp-'));
@@ -133,7 +133,7 @@ async function callListHarnesses(env: Record<string, string>): Promise<{ tools: 
 describe('mcp server over stdio', () => {
     it('without adapters on PATH: every harness unavailable with its install hint, default limits', async () => {
         const { tools, out } = await callListHarnesses(serverEnv({}));
-        expect(tools).toStrictEqual(['list_harnesses', 'run_thronglet', 'send_message']);
+        expect(tools).toStrictEqual(['list_harnesses', 'run_thronglet', 'send_message', 'wait_thronglet']);
         expect(out.harnesses).toStrictEqual([]);
         assertInstallHints(out.unavailable, ['claude', 'codex', 'opencode']);
         expect(out.limits).toStrictEqual({
@@ -280,8 +280,9 @@ describe('run_thronglet over stdio', () => {
     /** Server whose `claude` harness is the fake agent in `scenario` (plus `agentEnv`); `tag` finds its adapter processes. */
     async function connect(
         scenario: string,
-        agentEnv: Record<string, string> = {}
-    ): Promise<{ client: Client; tag: string; close: () => Promise<void> }> {
+        agentEnv: Record<string, string> = {},
+        cache = join(dir, 'cache')
+    ): Promise<{ client: Client; tag: string; pid: number; close: () => Promise<void> }> {
         const tag = newTag();
         const config = writeConfig(
             `run-${tag}.yaml`,
@@ -298,12 +299,12 @@ describe('run_thronglet over stdio', () => {
             command: process.execPath,
             args: ['src/mcp.ts'],
             cwd: repo,
-            env: serverEnv({ THRONG_MCP_CONFIG: config }),
+            env: serverEnv({ THRONG_MCP_CONFIG: config, THRONG_MCP_CACHE_DIR: cache }),
             stderr: 'pipe',
         });
         const client = new Client({ name: 'throng-test', version: '0' });
         await client.connect(transport);
-        return { client, tag, close: () => client.close() };
+        return { client, tag, pid: transport.pid ?? 0, close: () => client.close() };
     }
 
     function payloadOf(result: Record<string, unknown>): unknown {
@@ -458,5 +459,72 @@ describe('run_thronglet over stdio', () => {
         } finally {
             await close();
         }
+    });
+
+    it('background: run_thronglet returns pending, wait_thronglet the payload, also after a server restart', async () => {
+        const cache = mkdtempSync(join(dir, 'cache-bg-'));
+        const first = await connect('echo', { FAKE_TURN_MS: '300' }, cache);
+        let payload: RunSuccess;
+        let id: string;
+        try {
+            const started = await first.client.callTool({
+                name: 'run_thronglet',
+                arguments: {
+                    agent: 'claude/fake-small',
+                    prompt: 'hi',
+                    cwd: repo,
+                    description: 'test',
+                    background: true,
+                },
+            });
+            expect(started.isError).toBe(undefined);
+            const pending = payloadOf(started) as TurnPending;
+            expect(pending.state).toBe('running');
+            expect(pending.queued).toBe(0);
+            id = pending.session_id;
+
+            const waited = await first.client.callTool({ name: 'wait_thronglet', arguments: { session_id: id } });
+            expect(waited.isError).toBe(undefined);
+            payload = payloadOf(waited) as RunSuccess;
+            expect(payload.session_id).toBe(id);
+            expect(payload.text?.startsWith('echo: '), payload.text).toBe(true);
+            expect(tagAlive(first.tag)).toBe(false);
+        } finally {
+            await first.close();
+        }
+
+        const second = await connect('echo', {}, cache);
+        try {
+            const again = await second.client.callTool({ name: 'wait_thronglet', arguments: { session_id: id } });
+            expect(again.isError).toBe(undefined);
+            expect(payloadOf(again)).toStrictEqual(payload);
+        } finally {
+            await second.close();
+        }
+    });
+
+    it('a server killed mid-turn: the next server marks the turn interrupted, wait_thronglet returns transport_lost', async () => {
+        const cache = mkdtempSync(join(dir, 'cache-kill-'));
+        const first = await connect('hang', {}, cache);
+        const started = await first.client.callTool({
+            name: 'run_thronglet',
+            arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo, description: 'test', background: true },
+        });
+        const { session_id: id } = payloadOf(started) as TurnPending;
+        process.kill(first.pid, 'SIGKILL');
+        await waitFor(() => !isAlive(first.pid), 2000, 'server survived SIGKILL');
+        await first.close().catch(() => undefined);
+
+        const second = await connect('echo', {}, cache);
+        try {
+            const waited = await second.client.callTool({ name: 'wait_thronglet', arguments: { session_id: id } });
+            expect(waited.isError).toBe(true);
+            const failure = payloadOf(waited) as RunFailure;
+            expect(failure.code).toBe('transport_lost');
+            expect(failure.message).toBe('turn interrupted: the throng server process that ran it is gone');
+        } finally {
+            await second.close();
+        }
+        await waitFor(() => !tagAlive(first.tag), 3000, 'the killed server left its adapter running');
     });
 });

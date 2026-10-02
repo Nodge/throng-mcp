@@ -26,7 +26,7 @@ import type { Progress } from './progress.ts';
 import { buildCorrectivePrompt, buildPrompt } from './prompt.ts';
 import type { SessionRegistry } from './registry.ts';
 import type { Semaphore } from './semaphore.ts';
-import { type SessionRecord, touchSessionRecord, writeSessionRecord } from './sessions.ts';
+import { endTurn, type SessionRecord, updateSessionRecord, writeSessionRecord } from './sessions.ts';
 import type { SubmitState } from './structured/validate.ts';
 
 // The pipeline shared by run_thronglet and send_message (DESIGN §3.2, §3.3, §4.2, §7):
@@ -50,6 +50,8 @@ export interface RunContext {
     cancelGraceMs?: number;
     /** Passed to the Worker (stdin close → SIGTERM → SIGKILL steps); the Worker's default otherwise. */
     exitGraceMs?: number;
+    /** Right before the first prompt goes out, once the session record says the turn runs (background acceptance, §3.6). */
+    onTurnStarted?: (sessionId: string) => void;
 }
 
 export type RunOutcome = { ok: true; payload: RunSuccess } | { ok: false; payload: RunFailure };
@@ -91,8 +93,10 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
     const lifecycle = new RunLifecycle(ctx.signal);
     let bridge: PermissionBridge | undefined;
     let sessionId: string | undefined;
-    /** Releases the session's turn lock; given back once the adapter is gone and the record is touched. */
+    /** Releases the session's turn lock; given back once the adapter is gone and the record is updated. */
     let unlockSession: (() => void) | undefined;
+    /** The session whose lock this call holds: only the holder writes the turn's fields into the record. */
+    let lockedId: string | undefined;
     /** Mode requested by the permission policy; the agent may fall back to another one (claude: auto → acceptEdits). */
     let requestedMode: string | undefined;
     /** Temp dir of the structured-output run: schema.json and submit-tool's result.json. */
@@ -172,13 +176,14 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
 
         // Queue wait (the session's own queue, then the semaphore) counts neither toward timeout_s nor toward
         // duration_s (DESIGN §7). Session lock first: a turn waiting for its session holds no slot.
-        const onQueued = (waiting: number) => ctx.progress.queued(waiting);
+        const onQueued = (behind: 'session' | 'slot') => (waiting: number) => ctx.progress.queued(waiting, behind);
         const queuedAt = now();
         try {
             if (request.kind === 'resume') {
-                unlockSession = await ctx.sessions.acquire(request.sessionId, ctx.signal, onQueued);
+                unlockSession = await ctx.sessions.acquire(request.sessionId, ctx.signal, onQueued('session'));
+                lockedId = request.sessionId;
             }
-            await lifecycle.acquire(ctx.semaphore, onQueued);
+            await lifecycle.acquire(ctx.semaphore, onQueued('slot'));
         } finally {
             waitedMs = now() - queuedAt;
         }
@@ -239,7 +244,8 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         if (request.kind === 'new') {
             // A brand-new id is never contended, but the lock is taken before the record exists: a send_message that
             // reads the record must queue behind this turn.
-            unlockSession = await ctx.sessions.acquire(sessionId, ctx.signal, onQueued);
+            unlockSession = await ctx.sessions.acquire(sessionId, ctx.signal, onQueued('session'));
+            lockedId = sessionId;
             const createdAt = new Date(now()).toISOString();
             await writeSessionRecord(ctx.cacheDir, sessionId, {
                 harness: target.harness,
@@ -249,6 +255,8 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
                 description: request.description,
                 created_at: createdAt,
                 last_used_at: createdAt,
+                turn_started_at: createdAt,
+                turn_pid: process.pid,
             }).catch((err: unknown) => {
                 log.warn('session record not written', { session: sessionId, error: errorText(err) });
                 warnings.push(
@@ -280,6 +288,16 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
             return response;
         };
 
+        if (request.kind === 'resume') {
+            const startedAt = new Date(now()).toISOString();
+            await updateSessionRecord(ctx.cacheDir, sessionId, {
+                turn_started_at: startedAt,
+                turn_pid: process.pid,
+            }).catch((err: unknown) =>
+                log.warn('session record not updated', { session: sessionId, error: errorText(err) })
+            );
+        }
+        ctx.onTurnStarted?.(sessionId);
         let response = await turn(buildPrompt(call.prompt, call.schema !== undefined));
         // Structured output (DESIGN §6): after each turn read submit-tool's out file; re-prompt at most twice.
         for (let corrective = 0; outPath; corrective++) {
@@ -357,9 +375,11 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         ctx.progress.done();
         bridge?.cancelAll();
         await lifecycle.close();
-        if (sessionId !== undefined) {
-            await touchSessionRecord(ctx.cacheDir, sessionId, new Date(now())).catch((err: unknown) =>
-                log.warn('session record not updated', { session: sessionId, error: errorText(err) })
+        // A failure before the lock (guards, a cancel while queued) leaves the record to the turn that holds it.
+        if (lockedId !== undefined) {
+            const id = lockedId;
+            await updateSessionRecord(ctx.cacheDir, id, endTurn(outcome, new Date(now()))).catch((err: unknown) =>
+                log.warn('session record not updated', { session: id, error: errorText(err) })
             );
         }
     } catch (err) {

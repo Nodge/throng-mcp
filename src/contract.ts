@@ -29,6 +29,19 @@ export interface RunSuccess {
     warnings?: string[];
 }
 
+/** What a session is doing, as the registry sees it in this process (DESIGN §3.7). */
+export type SessionState = 'running' | 'queued' | 'idle' | 'failed';
+
+/**
+ * A turn accepted with `background: true`, or `wait_thronglet`'s answer when its `timeout_s` elapsed (DESIGN §3.6).
+ * `queued` counts the messages waiting behind the running turn.
+ */
+export interface TurnPending {
+    session_id: string;
+    state: 'running' | 'queued';
+    queued: number;
+}
+
 export interface RunFailure {
     code: ErrorCode;
     message: string;

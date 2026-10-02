@@ -134,6 +134,7 @@ function recordingProgress(): RecordingProgress {
         calls,
         queued: n => calls.push(`queued ${n}`),
         started: () => calls.push('started'),
+        waiting: () => calls.push('waiting'),
         tool: title => calls.push(`tool ${title}`),
         text: () => calls.push('text'),
         done: () => calls.push('done'),
@@ -535,7 +536,12 @@ describe('sendMessage', () => {
             Date.parse(after.last_used_at) > Date.parse(before.last_used_at),
             `${before.last_used_at} → ${after.last_used_at}`
         ).toBe(true);
-        expect({ ...after, last_used_at: undefined }).toStrictEqual({ ...before, last_used_at: undefined });
+        expect(after.last_result).toStrictEqual(second);
+        expect({ ...after, last_used_at: undefined, last_result: undefined }).toStrictEqual({
+            ...before,
+            last_used_at: undefined,
+            last_result: undefined,
+        });
     });
 
     it('unknown or unsafe id → session_not_found before spawn', async () => {
@@ -662,6 +668,9 @@ describe('session queue', () => {
             started: () => {
                 onStarted?.();
                 events.push(`${name} started`);
+            },
+            waiting: () => {
+                /* not logged */
             },
             tool: () => {
                 /* not logged */
@@ -819,5 +828,116 @@ describe('session queue', () => {
         expect(payload.session_id).toBe(id);
         expect(sessions.busy(id)).toBe(false);
         expect(tagAlive(tag), 'adapter still running').toBe(false);
+    });
+});
+
+describe('turn record', () => {
+    const recordAt = (ctx: RunContext, id: string) => join(ctx.cacheDir, 'sessions', `${id}.json`);
+    const readRecord = (ctx: RunContext, id: string) =>
+        JSON.parse(readFileSync(recordAt(ctx, id), 'utf8')) as SessionRecord;
+
+    it('onTurnStarted fires once, after the record exists, before the agent text; last_result is the payload', async () => {
+        const { loaded } = fakeClaude('echo');
+        const events: string[] = [];
+        const progress = { ...recordingProgress(), text: () => events.push('text') };
+        const cacheDir = mkdtempSync(join(root, 'cache-'));
+        const ctx = makeCtx(loaded, {
+            cacheDir,
+            progress,
+            onTurnStarted: id => {
+                const path = join(cacheDir, 'sessions', `${id}.json`);
+                const record = existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as SessionRecord) : undefined;
+                events.push(`turn ${id} record=${record ? 'yes' : 'no'} pid=${record?.turn_pid}`);
+            },
+        });
+        const payload = ok(await runThronglet(input('claude/fake-small'), ctx));
+        expect(events[0]).toBe(`turn ${payload.session_id} record=yes pid=${process.pid}`);
+        expect(events.filter(e => e.startsWith('turn ')).length).toBe(1);
+        expect(events.slice(1).every(e => e === 'text') && events.length > 1, JSON.stringify(events)).toBe(true);
+
+        const record = readRecord(ctx, payload.session_id);
+        expect(record.last_result).toStrictEqual(payload);
+        expect(record.last_error).toBe(undefined);
+        expect(record.turn_started_at).toBe(undefined);
+        expect(record.turn_pid).toBe(undefined);
+    });
+
+    it('send_message: turn fields while the turn runs, then last_error replaces last_result', async () => {
+        const { loaded, tag } = fakeClaude('hang');
+        const ctx = makeCtx(loaded);
+        const at = new Date().toISOString();
+        const previous: RunSuccess = {
+            session_id: 'fake-t',
+            text: 'old',
+            stop_reason: 'end_turn',
+            usage: {},
+            duration_s: 1,
+        };
+        await writeSessionRecord(ctx.cacheDir, 'fake-t', {
+            harness: 'claude',
+            model: 'fake-small',
+            cwd: work,
+            description: '',
+            created_at: at,
+            last_used_at: at,
+            last_result: previous,
+        });
+        const started: string[] = [];
+        const call = sendMessage(
+            { session_id: 'fake-t', prompt: 'x', timeout_s: 1 },
+            { ...ctx, onTurnStarted: id => started.push(id) }
+        );
+        await waitFor('turn started', () => started.length > 0);
+        const running = readRecord(ctx, 'fake-t');
+        expect(running.turn_pid).toBe(process.pid);
+        expect(Date.parse(running.turn_started_at ?? '') >= Date.parse(at)).toBe(true);
+        expect(running.last_result).toStrictEqual(previous);
+
+        const payload = failed(await call, 'timeout');
+        const after = readRecord(ctx, 'fake-t');
+        expect(after.last_error).toStrictEqual(payload);
+        expect(after.last_error?.code).toBe('timeout');
+        expect(after.last_result).toBe(undefined);
+        expect(after.turn_started_at).toBe(undefined);
+        expect(after.turn_pid).toBe(undefined);
+        expect(started).toStrictEqual(['fake-t']);
+        expect(tagAlive(tag)).toBe(false);
+    });
+
+    it('run_thronglet: a timeout lands in last_error; a failure after the handshake too (model_rejected)', async () => {
+        const hang = fakeClaude('hang');
+        const ctx = makeCtx(hang.loaded);
+        const timedOut = failed(await runThronglet(input('claude/fake-small', { timeout_s: 1 }), ctx), 'timeout');
+        expect(readRecord(ctx, timedOut.session_id ?? '').last_error).toStrictEqual(timedOut);
+
+        const echo = fakeClaude('echo');
+        const echoCtx = makeCtx(echo.loaded);
+        let turns = 0;
+        const rejected = failed(
+            await runThronglet(input('claude/nope'), { ...echoCtx, onTurnStarted: () => turns++ }),
+            'model_rejected'
+        );
+        expect(turns).toBe(0);
+        const record = readRecord(echoCtx, rejected.session_id ?? '');
+        expect(record.last_error).toStrictEqual(rejected);
+        expect(record.turn_started_at).toBe(undefined);
+    });
+
+    it('a failure before the session lock leaves the record alone', async () => {
+        const { loaded } = fakeClaude('echo');
+        const ctx = makeCtx(loaded);
+        const gone = join(root, `gone-${randomUUID()}`);
+        const at = new Date().toISOString();
+        await writeSessionRecord(ctx.cacheDir, 'fake-g', {
+            harness: 'claude',
+            model: 'fake-small',
+            cwd: gone,
+            description: '',
+            created_at: at,
+            last_used_at: at,
+        });
+        const before = readFileSync(recordAt(ctx, 'fake-g'), 'utf8');
+        failed(await sendMessage({ session_id: 'fake-g', prompt: 'x' }, ctx), 'spawn_failed');
+        expect(readFileSync(recordAt(ctx, 'fake-g'), 'utf8')).toBe(before);
     });
 });

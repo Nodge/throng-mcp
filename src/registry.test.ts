@@ -67,4 +67,38 @@ describe('SessionRegistry', () => {
         await expect(aborted).rejects.toThrow(/session's running turn/);
         expect(registry.busy('s'), 'an already-aborted call leaves no entry').toBe(false);
     });
+
+    it('idle(id) resolves at once when not busy, otherwise after the last holder and waiter are gone', async () => {
+        const registry = new SessionRegistry();
+        await registry.idle('s');
+        const a = await registry.acquire('s', never, () => undefined);
+        const b = registry.acquire('s', never, () => undefined);
+        let idle = false;
+        const waiting = registry.idle('s').then(() => (idle = true));
+        a();
+        const releaseB = await b;
+        await tick();
+        expect(idle, 'idle while B holds the session').toBe(false);
+        releaseB();
+        await waiting;
+        expect(idle).toBe(true);
+    });
+
+    it('attachTurn: retrievable while the session is busy, detached on demand; a no-op on an idle session', async () => {
+        const registry = new SessionRegistry();
+        const idleController = new AbortController();
+        registry.attachTurn('s', idleController)();
+        expect(registry.turns('s')).toStrictEqual([]);
+
+        const release = await registry.acquire('s', never, () => undefined);
+        const first = new AbortController();
+        const second = new AbortController();
+        const detachFirst = registry.attachTurn('s', first);
+        registry.attachTurn('s', second);
+        expect(registry.turns('s')).toStrictEqual([first, second]);
+        detachFirst();
+        expect(registry.turns('s')).toStrictEqual([second]);
+        release();
+        expect(registry.turns('s')).toStrictEqual([]);
+    });
 });

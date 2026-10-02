@@ -211,7 +211,7 @@ output: {
 }
 ```
 
-Session records on disk (§8) merged with the live state of this server process. Live state is per process: a thronglet started by another server instance (e.g. a nested session's own throng) shows with the state its record carries. A record whose turn was running when the server died is marked `failed` at startup with an error naming the restart; it is never shown as `running`.
+Session records on disk (§8) merged with the live state of this server process. Live state is per process: a thronglet started by another server instance (e.g. a nested session's own throng) shows with the state its record carries. A record whose turn was running in a server process that is gone (its `turn_pid` is dead, §8) is marked `failed` at startup with `last_error` = `transport_lost`, "turn interrupted: the throng server process that ran it is gone"; it is never shown as `running`.
 
 ### 3.8 `cancel_thronglet`
 
@@ -394,7 +394,9 @@ limits:
 ```
 Config validation with zod; an error goes to stderr at server start and into `list_harnesses.reason`.
 
-Session records: `~/.cache/throng/sessions/<session_id>.json` = `{ harness, model, effort, cwd, description, created_at, last_used_at, turn_started_at?, last_result? | last_error? }`, keyed by the harness's own ACP session id (UUID-like in all three; collisions across harnesses are not a practical concern). Written when the ACP session exists, updated on every turn: `turn_started_at` is set while a turn runs and cleared with the turn's `last_result` (the success payload) or `last_error` (the failure payload). Records survive server restarts; a record with `turn_started_at` set at startup gets `last_error` = interrupted by a server restart (§3.7). The queue is not persisted: messages queued behind a turn that dies with the server are lost, and `list_thronglets` says so through the failed state.
+Session records: `~/.cache/throng/sessions/<session_id>.json` = `{ harness, model, effort, cwd, description, created_at, last_used_at, turn_started_at?, turn_pid?, last_result? | last_error? }`, keyed by the harness's own ACP session id (UUID-like in all three; collisions across harnesses are not a practical concern). Written when the ACP session exists, updated on every turn: `turn_started_at` and `turn_pid` (the server process running the turn) are set while a turn runs and cleared with the turn's `last_result` (the success payload) or `last_error` (the failure payload). Only the turn that holds the session lock writes these fields: a call that fails before taking the lock (guards, a cancel while queued) returns its error to the caller and leaves the record alone.
+
+Records are shared by every throng server instance on the machine (each harness spawns its own, §3.5), so `turn_pid` is what tells "running in another process" from "died": at startup a record with `turn_started_at` whose `turn_pid` is not alive (or is this process's own pid, which can't own a turn yet) gets `last_error` = `transport_lost`, "turn interrupted: the throng server process that ran it is gone" (§3.7); a record owned by a live pid is left alone, and `wait_thronglet` on it polls the record once a second. Records survive server restarts. The queue is not persisted: messages queued behind a turn that dies with the server are lost, and `list_thronglets` says so through the failed state.
 
 Logs: server stderr has short lines (worker start/stop, errors, every permission decision, each call's outcome). throng keeps no transcripts: the full history of a session is in the harness's own log, found by `session_id` (Claude Code `~/.claude/projects/`, Codex `~/.codex/sessions/`, OpenCode its storage). Rotation: session records older than 14 days are deleted at start.
 

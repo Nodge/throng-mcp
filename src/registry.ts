@@ -1,11 +1,15 @@
 import { Semaphore } from './semaphore.ts';
 
-// Live sessions of this process (DESIGN §4). For now only the per-session turn queue of §3.3.
+// Live sessions of this process (DESIGN §4): the per-session turn queue of §3.3 and the background turns of §3.6.
 
 interface Entry {
     lock: Semaphore;
     /** The holder plus the waiters; the entry is dropped at zero. */
     users: number;
+    /** `idle()` callers, resolved when the entry is dropped. */
+    idle: (() => void)[];
+    /** Detached controllers of the background turns on this session (running or queued); for cancel_thronglet. */
+    turns: Set<AbortController>;
 }
 
 /** One per server process: turns on one session_id run one after another, FIFO. */
@@ -20,11 +24,15 @@ export class SessionRegistry {
         const entry = this.#entries.get(sessionId) ?? {
             lock: new Semaphore(1, "cancelled while waiting for the session's running turn to end"),
             users: 0,
+            idle: [],
+            turns: new Set<AbortController>(),
         };
         this.#entries.set(sessionId, entry);
         entry.users++;
         const leave = () => {
-            if (--entry.users === 0) this.#entries.delete(sessionId);
+            if (--entry.users > 0) return;
+            this.#entries.delete(sessionId);
+            for (const resolve of entry.idle) resolve();
         };
         const acquiring = entry.lock.acquire(signal);
         if (entry.lock.waiting > 0 && !signal.aborted) onQueued(entry.lock.waiting);
@@ -52,5 +60,25 @@ export class SessionRegistry {
     /** Calls queued behind the session's running turn. */
     waiting(sessionId: string): number {
         return this.#entries.get(sessionId)?.lock.waiting ?? 0;
+    }
+
+    /** Resolves once the session has no running or queued turn in this process; at once when it has none now. */
+    idle(sessionId: string): Promise<void> {
+        const entry = this.#entries.get(sessionId);
+        if (!entry) return Promise.resolve();
+        return new Promise(resolve => entry.idle.push(resolve));
+    }
+
+    /** Registers a background turn's controller on a busy session; returns its detach. A no-op on an idle session. */
+    attachTurn(sessionId: string, controller: AbortController): () => void {
+        const entry = this.#entries.get(sessionId);
+        if (!entry) return () => undefined;
+        entry.turns.add(controller);
+        return () => entry.turns.delete(controller);
+    }
+
+    /** Controllers of the background turns attached to the session. */
+    turns(sessionId: string): AbortController[] {
+        return [...(this.#entries.get(sessionId)?.turns ?? [])];
     }
 }

@@ -20,8 +20,9 @@ describe('progress', () => {
     it('sends nothing without a progress token', async () => {
         const { extra, sent } = fakeExtra(undefined);
         const p = createProgress(extra, { heartbeatMs: 5 });
-        p.queued(1);
+        p.queued(1, 'slot');
         p.started();
+        p.waiting();
         p.tool('read x');
         p.text(10);
         await sleep(20);
@@ -33,7 +34,7 @@ describe('progress', () => {
     it('tool titles and queued position, with a monotonic counter and no total', async () => {
         const { extra, sent } = fakeExtra('tok');
         const p = createProgress(extra);
-        p.queued(3);
+        p.queued(3, 'session');
         p.tool('read README.md');
         p.tool('edit src/a.ts');
         p.done();
@@ -75,6 +76,17 @@ describe('progress', () => {
         p.tool('late');
         await p.idle();
         expect(sent.length, 'sent after done()').toBe(count);
+    });
+
+    it('waiting: heartbeat "waiting <elapsed>" until done()', async () => {
+        const { extra, sent } = fakeExtra('w');
+        const p = createProgress(extra, { heartbeatMs: 30 });
+        p.waiting();
+        await sleep(100);
+        p.done();
+        await p.idle();
+        expect(sent.length, `expected heartbeats, got ${sent.length}`).toBeGreaterThanOrEqual(2);
+        for (const s of sent) expect(s.message ?? '').toMatch(/^waiting \dm\d\ds$/);
     });
 
     it('a failing send does not throw', async () => {
