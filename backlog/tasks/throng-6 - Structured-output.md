@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@nodge'
 created_date: '2026-09-27 18:56'
-updated_date: '2026-10-02 08:17'
+updated_date: '2026-10-02 08:18'
 labels: []
 milestone: m-1
 dependencies:
@@ -118,6 +118,8 @@ Sherpa review 2026-10-02 (maintainer), commit 2acc7e7: schema moved from the pro
 Smoke 2026-10-02 (maintainer) after the review fixes: pnpm smoke:claude-schema — claude/sonnet run 16.7 s, submit_result called once (schema from the tool's inputSchema, no allowedTools), structured {file: pong.txt, content: pong}, resume 2.5 s → 'pong.txt', no orphans. SMOKE PASSED.
 
 Smoke 2026-10-02 after the review fixes: pnpm smoke:codex-schema — codex/gpt-6-luna run 23 s, submit_result once, structured {file: pong.txt, content: pong}, resume 10 s → 'pong.txt', no orphans. SMOKE PASSED.
+
+Smoke 2026-10-02 after the review fixes: pnpm smoke:opencode-schema — opencode/openrouter/z-ai/glm-5.3-flash run 11.6 s, submit_result once (title throng_result_submit_result), structured {file: pong.txt, content: pong}, resume 4.9 s → 'pong.txt', no orphans. SMOKE PASSED. Schema smoke matrix after the review fixes: claude 16.7 s / codex 23 s / opencode 11.6 s, all PASS.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
