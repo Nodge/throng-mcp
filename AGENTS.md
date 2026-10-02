@@ -45,7 +45,7 @@ Work found outside a task's acceptance criteria is not added silently: describe 
 
 ## End of stage
 
-All milestone tasks `Done` (the maintainer's smoke list is part of their acceptance criteria) + git tag (`v1`, `v2`) + dogfood (the maintainer calls `run_thronglet` from real sessions) + `backlog milestone archive <name>`. Dogfood is the only point where the process stops and waits for a human. Work past v2 (DESIGN §11) is decomposed into tasks when v2 closes, not before.
+All milestone tasks `Done` (the maintainer's smoke list is part of their acceptance criteria) + dogfood (the maintainer calls `run_thronglet` from real sessions) + `backlog milestone archive <name>`. Dogfood is the only point where the process stops and waits for a human. Work past v2 (DESIGN §11) is decomposed into tasks when v2 closes, not before.
 
 ## Decisions
 
