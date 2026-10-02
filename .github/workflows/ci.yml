@@ -12,7 +12,7 @@ jobs:
     lint:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
               with:
                   # changeset status diffs against the merge base with origin/main, which a
                   # shallow clone does not have.
@@ -43,7 +43,7 @@ jobs:
                 node-version: [22.x, 24.x, 26.x]
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - uses: actions/checkout@v7
             - uses: pnpm/action-setup@v6
             - uses: actions/setup-node@v7
               with:
