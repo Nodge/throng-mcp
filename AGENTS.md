@@ -14,8 +14,8 @@ Every code task goes through the `runbook-task-cycle` skill (`.claude/skills/run
 
 1. `backlog task view THRONG-n --plain`, then `backlog task edit THRONG-n -s "In Progress" -a @<you>`.
 2. The main session researches and writes a self-contained brief: specific DESIGN.md sections, contracts, the task's acceptance criteria, what not to touch. The brief is the plan of record: `backlog task edit THRONG-n --plan "<brief>"`.
-3. Load the skill and run it with inputs `taskId`, `brief`, `repo` (the project directory, or a worktree), optionally `coder` and `maxFixRounds` — implementation by an Opus coder, project checks, dual review (Opus + Codex), triage by the main session, fixes by the coder verified by a separate Opus, a polish pass. The run lives in `.agent-runbooks/runs/<date>-<task>/` (gitignored) and ends `ready`, `needs_attention` or `failed`, naming the file to read.
-4. The main session reads that file (`polish.md`, then `verify.md` or `triage.md`) and spot-checks the "Resolved" evidence against the code. Report summary, deviations and deferred minor findings go to `--append-notes`.
+3. Load the skill and run it with inputs `taskId`, `brief`, `repo` (the project directory, or a worktree), optionally `coder` and `maxFixRounds` — implementation by an Opus coder, project checks, dual review (Opus + Codex) with a failure scenario per finding, triage as a step on Fable, fixes by the coder verified by a separate Opus, a polish pass. The run lives in `.agent-runbooks/runs/<date>-<task>/` (gitignored) and ends `ready`, `needs_attention` or `failed`, naming the file to read.
+4. The main session reads that file (`polish.md`, then `verify.md` or `triage.md`) and spot-checks the "Resolved" evidence against the code. Report summary, deviations and findings rejected as not worth it go to `--append-notes`.
 5. Finalization: check acceptance criteria and DoD items only against evidence (tests, command output), `--final-summary`, status `Done`.
 6. One commit to main with the code and the `backlog/` changes, task ID in the message (`THRONG-1: skeleton`).
 
