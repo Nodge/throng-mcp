@@ -2,21 +2,33 @@
 
 [![skills.sh](https://skills.sh/b/nodge/throng-mcp)](https://skills.sh/nodge/throng-mcp/throng)
 
-An MCP server that lets your coding agent hand work to another one. From a Claude Code session you can give a task to Codex, or to a model behind OpenCode; throng runs that agent in the directory you name, over ACP (Agent Client Protocol), and returns its final message into your session. The nested session stays alive, so a follow-up goes to the same agent with everything it already knows.
+An MCP server that lets your coding agent hand work to another one. Any MCP client can call it, and the task goes to any supported harness.
 
-What this buys you is a second model where one model's view is not enough: a review by another vendor's model, a design critique, a cheaper model for a mechanical pass. The agents run in the background too, so several can work while you carry on.
+- **Another model's view.** A review by another vendor's model, a design critique, a cheaper model for a mechanical pass.
+- **Second opinions.** Hand one agent's result to another: Codex reviews, Claude fixes, Codex checks again, each in its own long-lived session.
+- **Real sessions, not one-shots.** The nested agent keeps running; a follow-up goes to the same agent with everything it already knows.
+- **Background work.** Several agents run at once while you carry on.
+- **Answers by schema.** Pass a JSON Schema and the result comes back as data that fits it, not prose to parse: a list of findings, a verdict, a plan, ready to feed into the next step.
+
+Supported harnesses: Claude Code, Codex, OpenCode (and every model it can reach). Setup for each is under [Install](#2-the-agents-to-run).
 
 ## Example
 
-In Claude Code:
+You're in Claude Code and have just changed the payment flow.
 
-> Ask Codex to review the diff on this branch against main. Concrete bugs only, with file and line. Don't change any files.
+> Ask Codex to find a way this payment flow could charge someone twice. Don't change any files.
 
-Claude calls `run_thronglet` with `agent: "codex/gpt-6-sol:high"`, a self-contained prompt and the repository path. The call returns when Codex is done, with its findings as text. Then:
+Claude calls `run_thronglet` with `agent: "codex/gpt-6-sol:high"`, a self-contained prompt, the repository path and a `schema`, so the findings come back as data: file, line, steps to reproduce.
 
-> Have the same Codex session fix the first two findings and run the tests.
+> Give the findings to Opus. Have it fix each one, add a test for it and run the tests.
 
-That is `send_message` into the same session: Codex still has the diff and its own findings in context.
+A second `run_thronglet`, with `agent: "claude/opus"`. Codex's findings go into its prompt; Opus edits the code and runs the tests.
+
+> Now show the same Codex session what changed. Can it still make a customer pay twice?
+
+That is `send_message` into the first session: Codex still has its findings in context and checks the fixes against them instead of starting over.
+
+Any of these calls takes `background: true`: it returns at once and `wait_thronglet` collects the result later, which is how several agents work while you carry on.
 
 ## Install
 
@@ -37,7 +49,7 @@ Two ways to run it:
 
 ### 2. The agents to run
 
-Each agent needs its own CLI installed and logged in. Claude Code and Codex also need an ACP adapter; throng ships none. Install only the agents you want to delegate to.
+Each agent needs its own CLI installed and logged in. throng talks to agents over ACP (Agent Client Protocol); Claude Code and Codex need an ACP adapter, and throng ships none. Install only the agents you want to delegate to.
 
 <details>
 <summary><strong>Claude Code</strong></summary>
