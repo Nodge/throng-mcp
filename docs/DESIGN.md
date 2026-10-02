@@ -82,7 +82,7 @@ input: {
   description: string;        // what this thronglet is for; shown by list_thronglets, stored in the session record (§8)
   background?: boolean;       // default false; true returns as soon as the turn runs, see §3.6
   schema?: JsonSchemaObject;  // structured output, see §6
-  timeout_s?: number;         // default 21600 (6 h); per turn
+  timeout_s?: number;         // default 21600 (6 h), config limits.timeout_s; per turn
 }
 
 output (success): {
@@ -108,19 +108,25 @@ output (failure, MCP tool error: isError = true): {
 
 Both are a single JSON text block in `content[0].text`; no `structuredContent`, no `outputSchema`. Invalid input is rejected by the SDK's zod validation before our code runs (MCP SDK 1.30 reports it as a tool error whose text is the validation message, not the payload above); everything else that goes wrong is a tool error with the payload above, never an exception.
 
+`text` is the concatenated `agent_message_chunk`s of the last turn; `usage` tokens come from `PromptResponse.usage`, summed over the call's prompt turns, and `cost_usd` from `usage_update`, which claude and opencode send and codex doesn't (§4.3).
+
 ```ts
 type ErrorCode =
-  | 'harness_unavailable'    // adapter command not found, checked before spawn; message carries the install command (§4.1)
+  | 'harness_unavailable'    // adapter command not found (message carries the install command, §4.1), or a config error (message starts with `config error:`); checked before spawn
   | 'depth_exceeded'         // §7
   | 'elicitation_unsupported'// policy 'elicit' configured but the client lacks the capability; before spawn
   | 'session_not_found'      // send_message / wait / cancel: unknown id, or the harness lacks sessionCapabilities.resume
-  | 'spawn_failed' | 'handshake_timeout' | 'handshake_failed'
+  | 'spawn_failed'           // the adapter process could not start, or cwd is not a directory
+  | 'handshake_timeout'      // initialize + session setup exceeded limits.handshake_s (§4.2)
+  | 'handshake_failed'       // the adapter answered the handshake with an error
   | 'model_rejected'         // value not among options; message lists the valid ones
-  | 'timeout' | 'cancelled' | 'transport_lost'
-  | 'empty_result'           // end_turn without a single agent_message_chunk and without submit_result
+  | 'timeout'                // the turn exceeded timeout_s
+  | 'cancelled'              // the client (Esc, TaskStop), a steer, cancel_thronglet or the agent itself; the message names the source
+  | 'transport_lost'         // the adapter exited or closed its stdio mid-turn, or the server running the turn died (§3.7)
+  | 'empty_result'           // end_turn without a single agent_message_chunk and without submit_result; wait_thronglet: the record holds no turn result
   | 'structured_missing' | 'structured_invalid'   // after 2 corrective re-prompts
   | 'refusal'                // stop_reason refusal is reported as an error
-  | 'agent_error';
+  | 'agent_error';           // anything else the adapter reported; cancel_thronglet: see §3.8
 ```
 
 ### 3.3 `send_message`
@@ -141,9 +147,9 @@ output: same as run_thronglet; session_id stays the same
 
 Harness, model, effort and `cwd` come from the session record (§8): the caller doesn't repeat them. Every turn runs in a fresh adapter process that picks the session up via `session/resume` (no history replay); the nested session keeps its own context. Since the adapter process is new, the permission mode, model and effort are applied again after `session/resume`, exactly as after `session/new`. Unknown id, or the harness can't resume → tool error `session_not_found`.
 
-**Queue.** Turns on one session are serialized by throng: a message that arrives while a turn runs waits for `stop` and starts the next turn, FIFO, one message = one turn with its own `schema` and `timeout_s`. Never two adapter processes on one session. The adapters don't serialize themselves: a concurrent `session/prompt` reaches the model in all three, but the request/response pairing breaks differently in each, and codex-acp never answers the first prompt (spike 2026-10-02, THRONG-9 notes). A synchronous `send_message` on a busy session waits in the queue (progress reports it) and returns when the session is idle again, like `wait_thronglet`.
+**Queue.** Turns on one session are serialized by throng: a message that arrives while a turn runs waits for `stop` and starts the next turn, FIFO, one message = one turn with its own `schema` and `timeout_s`. Never two adapter processes on one session. The adapters don't serialize themselves: a concurrent `session/prompt` reaches the model in all three, but the request/response pairing breaks differently in each, and codex-acp never answers the first prompt (spike 2026-10-02, THRONG-9 notes). A synchronous `send_message` on a busy session waits in the queue (progress reports it) and returns when the session is idle again, like `wait_thronglet`. The wait counts toward neither `timeout_s` nor `duration_s`.
 
-**Steer.** `steer: true` is the one way to reach a running turn: `session/cancel`, then this message as the very next turn, ahead of the queue, which is kept after it. Works on all three adapters: the cancelled prompt resolves within a second and the next reply remembers the interrupted work. The in-flight tool call is aborted and a half-applied edit may remain; the tool description says so. On an idle session `steer` changes nothing. Two steers before the cancelled turn has ended run newest first: the latest steer is the current intent, the earlier one follows it, nothing is dropped.
+**Steer.** `steer: true` is the one way to reach a running turn: `session/cancel`, then this message as the very next turn, ahead of the queue, which is kept after it. Works on all three adapters: the cancelled prompt resolves within a second and the next reply remembers the interrupted work. The in-flight tool call is aborted and a half-applied edit may remain; the tool description says so. The cancelled turn fails with `cancelled` ("cancelled by steer") for its own caller; the steered turn's result becomes the session's last result. With `background: true` a steer on a running session is accepted as `queued`: the cancelled turn has to end first. On an idle session `steer` changes nothing. Two steers before the cancelled turn has ended run newest first: the latest steer is the current intent, the earlier one follows it, nothing is dropped.
 
 ### 3.4 `list_harnesses`
 
@@ -180,6 +186,8 @@ Run by the user, not by the tasks: nothing outside the project directory is touc
 output (background): { session_id: string; state: 'running' | 'queued'; queued: number }
 ```
 
+`state: 'queued'` is a `send_message` accepted behind the session's running turn; `queued` counts the messages waiting behind the running turn. For a message accepted as `queued`, failures that come after the acceptance go to `wait_thronglet`. A call waiting for a semaphore slot (§7) returns only once it has one and its handshake is done, reporting `queued (n)` in progress; cancelling the call before the acceptance cancels the run, after it the turn keeps running.
+
 The turn continues inside the server process. The semaphore slot (§7) is held only while a turn runs; an idle session holds none.
 
 ```ts
@@ -190,7 +198,7 @@ output: the last turn's payload, success or tool error, exactly as the synchrono
         timeout_s elapsed → { session_id, state: 'running' | 'queued', queued: number }, a normal result, not an error
 ```
 
-Results and failures are written to the session record (§8), so `wait_thronglet` is idempotent and answers after a server restart. It sends progress heartbeats like a run, so the client's idle timeout doesn't fire.
+Results and failures are written to the session record (§8), so `wait_thronglet` is idempotent and answers after a server restart. It sends progress heartbeats like a run, so the client's idle timeout doesn't fire. A turn running in another throng server is polled through its record (§8); a turn whose server is gone is marked `transport_lost` (§3.7) by `wait_thronglet` itself if no server start has done it yet.
 
 ### 3.7 `list_thronglets`
 
@@ -211,7 +219,7 @@ output: {
 }
 ```
 
-Session records on disk (§8) merged with the live state of this server process. Live state is per process: a thronglet started by another server instance (e.g. a nested session's own throng) shows with the state its record carries. A record whose turn was running in a server process that is gone (its `turn_pid` is dead, §8) is marked `failed` at startup with `last_error` = `transport_lost`, "turn interrupted: the throng server process that ran it is gone"; it is never shown as `running`.
+Session records on disk (§8) merged with the live state of this server process, most recently used first. `failed`: the last turn ended with an error; `idle`: it succeeded or no turn has finished yet. A record that can't be read is skipped and logged. Live state is per process: a thronglet started by another server instance (e.g. a nested session's own throng) shows with the state its record carries and `queued: 0`: that server's queue isn't visible here. A record whose turn was running in a server process that is gone (its `turn_pid` is dead, §8) is marked `failed` at startup with `last_error` = `transport_lost`, "turn interrupted: the throng server process that ran it is gone"; it is never shown as `running`.
 
 ### 3.8 `cancel_thronglet`
 
@@ -220,7 +228,7 @@ input: { session_id: string }
 output: { session_id: string; state: 'idle'; cancelled_turn: boolean }
 ```
 
-`session/cancel` of the running turn (§4.2 cancel path), the queue is dropped, a pending `wait_thronglet` resolves with the `cancelled` failure payload; the session is idle again and accepts a new `send_message`. On an idle session a no-op success. Unknown id → `session_not_found`.
+`session/cancel` of the running turn (§4.2 cancel path), the queue is dropped, a pending `wait_thronglet` resolves with the `cancelled` failure payload; the session is idle again and accepts a new `send_message`. The cancelled turn's error is `cancelled` ("cancelled by cancel_thronglet") and becomes the session's last result; queued calls, synchronous or background, fail `cancelled` too. Returns once the session is idle. On an idle session, or on a turn whose result is already final and which is only closing its adapter, a no-op success with `cancelled_turn: false`; that result stands. Unknown id → `session_not_found`. `agent_error` when the turn runs in another throng server process (cancel it from the session that started it), or doesn't stop within the longer of `limits.handshake_s` and the 5 s cancel grace, plus 20 s (80 s by default).
 
 
 ## 4. Architecture
@@ -406,7 +414,7 @@ Logs: server stderr has short lines (worker start/stop, errors, every permission
 - Run with `node src/mcp.ts`, no transpilation (type stripping): no `enum`, `namespace`, parameter properties, `import =`. tsconfig: `strict`, `erasableSyntaxOnly`, `verbatimModuleSyntax`, `allowImportingTsExtensions`, `module: nodenext`, `noEmit`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`. Imports with `.ts`.
 - Scripts: `pnpm typecheck` (`tsc --noEmit`), `pnpm test` (`vitest --run`; `pnpm test:watch` for watch mode), `pnpm lint` (`eslint .`), `pnpm fmt` (`prettier --write`), `pnpm smoke:<harness>`. The `ci:*` variants are what GitHub Actions runs (`.github/workflows/ci.yml`: lint, typecheck, prettier check, tests on Node 24 and 26). The lefthook pre-commit hook runs fmt, lint --fix and typecheck.
 - Tests without an LLM: `test/fake-agent` is an ACP agent on the agent-side SDK, scenarios via env (`FAKE_SCENARIO=echo|permission|submit-valid|submit-invalid-then-valid|resume|hang|crash-on-prompt|notice`). They cover Worker, collector, permissions (all 4 policies; elicit through a fake MCP client with the capability), structured (both re-prompt branches), resume, timeouts, cancel, tree kill (fake-agent spawns a grandchild `sleep`; after close it's gone), depth, semaphore, agent-spec parsing.
-- Smoke on real harnesses (manual, one at a time; per-stage lists are in the backlog tasks): claude/codex/opencode × `auto`, opencode with a custom provider, Esc → no orphans, a call > 2 min from the main session goes to the background; v2 adds codex+schema, resume with a follow-up question, elicit from an interactive session.
+- Smoke on real harnesses (manual, one at a time; commands in [development.md](development.md#smoke), per-stage lists in the backlog tasks): claude/codex/opencode × `auto`, opencode with a custom provider, Esc → no orphans, a call > 2 min from the main session goes to the background; v2 adds codex+schema, resume with a follow-up question, elicit from an interactive session.
 
 ## 10. Stages
 

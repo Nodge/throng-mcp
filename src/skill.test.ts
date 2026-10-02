@@ -29,7 +29,7 @@ describe('skills/throng/SKILL.md', () => {
         expect(mentioned.size, 'every tool is covered').toBe(TOOL_NAMES.length);
     });
 
-    it('is the path the README install command links', () => {
-        expect(readme).toMatch(/ln -s .*skills\/throng\b/);
+    it('is the skill the README install command names', () => {
+        expect(readme).toMatch(/npx skills add \S+ --skill throng\b/);
     });
 });
