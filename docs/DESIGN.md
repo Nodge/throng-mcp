@@ -4,7 +4,7 @@ Date: 2026-09-27. Status: agreed; stages in §10, tasks in `backlog/`.
 
 ## 1. Purpose
 
-MCP server `throng`. Tools: `run_thronglet` (launch a harness with a model, get the result synchronously), `resume_thronglet` (follow-up prompt into an earlier session), `list_harnesses` (discovery). Harnesses in v1: Claude Code, Codex, OpenCode. Transport to harnesses is ACP (Agent Client Protocol) v1. The harness edits the live tree at `cwd`; no sandboxes.
+MCP server `throng`. Tools: `run_thronglet` (launch a harness with a model, get the result, or run it in the background), `send_message` (next turn into an earlier session, queued or steering), `wait_thronglet`, `list_thronglets`, `cancel_thronglet` (background sessions), `list_harnesses` (discovery). Harnesses in v1: Claude Code, Codex, OpenCode. Transport to harnesses is ACP (Agent Client Protocol) v1. The harness edits the live tree at `cwd`; no sandboxes.
 
 Out of scope: runner/DSL, message bus, UI, OTel, worktree/apply-back, trust gates.
 
@@ -79,12 +79,14 @@ input: {
   agent: string;              // §3.1
   prompt: string;             // self-contained: the nested session doesn't see the conversation
   cwd: string;                // absolute
+  description: string;        // what this thronglet is for; shown by list_thronglets, stored in the session record (§8)
+  background?: boolean;       // default false; true returns as soon as the turn runs, see §3.6
   schema?: JsonSchemaObject;  // structured output, see §6
-  timeout_s?: number;         // default 21600 (6 h)
+  timeout_s?: number;         // default 21600 (6 h); per turn
 }
 
 output (success): {
-  session_id: string;         // the harness's own ACP session id; for resume_thronglet, and for `claude --resume` / `codex resume` by hand
+  session_id: string;         // the harness's own ACP session id; for send_message, and for `claude --resume` / `codex resume` by hand
   text?: string;              // final agent message (last prompt turn); omitted when `structured` is returned
   structured?: unknown;       // only with schema
   stop_reason: 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal';
@@ -96,7 +98,7 @@ output (success): {
 output (failure, MCP tool error: isError = true): {
   code: ErrorCode;
   message: string;            // the actual text: adapter stderr excerpt, ajv errors, list of valid models; not a paraphrase
-  session_id?: string;        // when the ACP session exists: lets the caller resume after timeout / structured_invalid
+  session_id?: string;        // when the ACP session exists: lets the caller send_message after timeout / structured_invalid
   text?: string;              // what the agent said before failing, if anything
   usage?: { ... };
   duration_s: number;
@@ -111,7 +113,7 @@ type ErrorCode =
   | 'harness_unavailable'    // adapter command not found, checked before spawn; message carries the install command (§4.1)
   | 'depth_exceeded'         // §7
   | 'elicitation_unsupported'// policy 'elicit' configured but the client lacks the capability; before spawn
-  | 'session_not_found'      // resume_thronglet: unknown id or harness lacks sessionCapabilities.resume
+  | 'session_not_found'      // send_message / wait / cancel: unknown id, or the harness lacks sessionCapabilities.resume
   | 'spawn_failed' | 'handshake_timeout' | 'handshake_failed'
   | 'model_rejected'         // value not among options; message lists the valid ones
   | 'timeout' | 'cancelled' | 'transport_lost'
@@ -121,19 +123,27 @@ type ErrorCode =
   | 'agent_error';
 ```
 
-### 3.3 `resume_thronglet`
+### 3.3 `send_message`
+
+A thronglet session is a sequence of turns (decision-6): `run_thronglet` creates the session and runs the first turn, `send_message` runs the next one. There is no separate resume tool.
 
 ```ts
 input: {
-  session_id: string;         // from a previous run_thronglet / resume_thronglet
+  session_id: string;         // from run_thronglet
   prompt: string;
+  steer?: boolean;            // default false; true interrupts a running turn, see below
+  background?: boolean;       // default false, see §3.6
   schema?: JsonSchemaObject;
   timeout_s?: number;
 }
 output: same as run_thronglet; session_id stays the same
 ```
 
-Harness, model, effort and `cwd` come from the session record (§8): the caller doesn't repeat them. A fresh adapter process picks the session up via `session/resume` (no history replay); the nested session keeps its own context. Since the adapter process is new, the permission mode, model and effort are applied again after `session/resume`, exactly as after `session/new`. Unknown id, or the harness can't resume → tool error `session_not_found` (added to `ErrorCode`).
+Harness, model, effort and `cwd` come from the session record (§8): the caller doesn't repeat them. Every turn runs in a fresh adapter process that picks the session up via `session/resume` (no history replay); the nested session keeps its own context. Since the adapter process is new, the permission mode, model and effort are applied again after `session/resume`, exactly as after `session/new`. Unknown id, or the harness can't resume → tool error `session_not_found`.
+
+**Queue.** Turns on one session are serialized by throng: a message that arrives while a turn runs waits for `stop` and starts the next turn, FIFO, one message = one turn with its own `schema` and `timeout_s`. Never two adapter processes on one session. The adapters don't serialize themselves: a concurrent `session/prompt` reaches the model in all three, but the request/response pairing breaks differently in each, and codex-acp never answers the first prompt (spike 2026-10-02, THRONG-9 notes). A synchronous `send_message` on a busy session waits in the queue (progress reports it) and returns when the session is idle again, like `wait_thronglet`.
+
+**Steer.** `steer: true` is the one way to reach a running turn: `session/cancel`, then this message as the very next turn, ahead of the queue, which is kept after it. Works on all three adapters: the cancelled prompt resolves within a second and the next reply remembers the interrupted work. The in-flight tool call is aborted and a half-applied edit may remain; the tool description says so. On an idle session `steer` changes nothing.
 
 ### 3.4 `list_harnesses`
 
@@ -160,7 +170,58 @@ Every available harness is started through ACP on each call (in parallel, no pro
 claude mcp add --scope user throng -- node /path/to/throng-mcp/src/mcp.ts
 ```
 
-Run by the user, not by the tasks: nothing outside the project directory is touched by the work itself. Tool names in Claude: `mcp__throng__run_thronglet`, `mcp__throng__resume_thronglet`, `mcp__throng__list_harnesses`.
+Run by the user, not by the tasks: nothing outside the project directory is touched by the work itself. Tool names in Claude: `mcp__throng__run_thronglet`, `mcp__throng__send_message`, `mcp__throng__wait_thronglet`, `mcp__throng__list_thronglets`, `mcp__throng__cancel_thronglet`, `mcp__throng__list_harnesses`.
+
+### 3.6 Background turns and `wait_thronglet`
+
+`background: true` on `run_thronglet` and `send_message` returns as soon as the ACP session exists and the turn is running; handshake, model selection and depth errors still fail the call itself:
+
+```ts
+output (background): { session_id: string; state: 'running' | 'queued'; queued: number }
+```
+
+The turn continues inside the server process. The semaphore slot (§7) is held only while a turn runs; an idle session holds none.
+
+```ts
+wait_thronglet
+input: { session_id: string; timeout_s?: number }   // default: the call timeout (§7)
+output: the last turn's payload, success or tool error, exactly as the synchronous call would have returned it
+        — only when the session is idle: no running turn and an empty queue;
+        timeout_s elapsed → { session_id, state: 'running' | 'queued', queued: number }, a normal result, not an error
+```
+
+Results and failures are written to the session record (§8), so `wait_thronglet` is idempotent and answers after a server restart. It sends progress heartbeats like a run, so the client's idle timeout doesn't fire.
+
+### 3.7 `list_thronglets`
+
+```ts
+input: {}
+output: {
+  thronglets: Array<{
+    session_id: string;
+    description: string;
+    agent: string;            // §3.1 spec as given
+    cwd: string;
+    state: 'running' | 'queued' | 'idle' | 'failed';
+    queued: number;
+    created_at: string;
+    last_used_at: string;
+    last_error?: { code: ErrorCode; message: string };   // when failed
+  }>;
+}
+```
+
+Session records on disk (§8) merged with the live state of this server process. Live state is per process: a thronglet started by another server instance (e.g. a nested session's own throng) shows with the state its record carries. A record whose turn was running when the server died is marked `failed` at startup with an error naming the restart; it is never shown as `running`.
+
+### 3.8 `cancel_thronglet`
+
+```ts
+input: { session_id: string }
+output: { session_id: string; state: 'idle'; cancelled_turn: boolean }
+```
+
+`session/cancel` of the running turn (§4.2 cancel path), the queue is dropped, a pending `wait_thronglet` resolves with the `cancelled` failure payload; the session is idle again and accepts a new `send_message`. On an idle session a no-op success. Unknown id → `session_not_found`.
+
 
 ## 4. Architecture
 
@@ -170,7 +231,7 @@ src/
   mcp.ts                    — entry: config, semaphore, StdioServerTransport, shutdown hooks
   mcp/
     tools.ts                — shared registration: progress, in-flight tracking, one JSON text block per result
-    tools/                  — one file per tool: input schema, description, mapping to run.ts / list.ts
+    tools/                  — one file per tool: input schema, description, mapping to run.ts / list.ts / registry.ts
     progress.ts             — notifications/progress
   contract.ts               — tool inputs and results, ErrorCode, ThrongError (§3)
   config.ts                 — defaults + ~/.config/throng/config.yaml + env (THRONG_MCP_CONFIG, THRONG_MCP_DEPTH)
@@ -185,6 +246,7 @@ src/
     worker.ts               — Worker: connect/initialize/newSession|resumeSession/setOptions/prompt/cancel/close
     collector.ts            — fold session/update → text, usage, warnings
   sessions.ts               — session records on disk (§8)
+  registry.ts               — live sessions of this process: state, queue, running turn, waiters (§3.3, §3.6)
   permissions.ts            — policy → answer to request_permission; bridge to MCP elicitation
   structured/
     submit-tool.ts          — stdio MCP server spawned by the harness: submit_result → ajv → result file
@@ -240,12 +302,12 @@ Model is set strictly: the value must be in `options` of the matching config opt
 
 ### 4.2 Worker (acp/worker.ts)
 
-One call = one adapter process = one ACP session. No pool (YAGNI; adapter start is seconds).
+One turn = one adapter process on one ACP session; the next turn of the same session is a new process with `session/resume`. No pool and no keep-alive between turns (YAGNI; adapter start is seconds, the harness keeps the context).
 
 Sequence:
 1. `spawn` (detached, own group, `stdio: [pipe, pipe, pipe]`, stderr → 64 KB ring buffer for error messages). `THRONG_MCP_DEPTH = depth + 1` in the child env.
 2. `connectWith(ndJsonStream)`, `initialize` (`clientCapabilities: { fs: {readTextFile:false, writeTextFile:false}, terminal:false }`).
-3. `session/new { cwd, mcpServers }` (+ `_meta` from the harness), or `session/resume { sessionId, cwd, mcpServers }` for `resume_thronglet` (requires `sessionCapabilities.resume`; unknown id → `session_not_found`). Steps 1–3 run under the handshake timeout (60 s) → `handshake_timeout`.
+3. `session/new { cwd, mcpServers }` (+ `_meta` from the harness), or `session/resume { sessionId, cwd, mcpServers }` for every later turn (requires `sessionCapabilities.resume`; unknown id → `session_not_found`). Steps 1–3 run under the handshake timeout (60 s) → `handshake_timeout`.
 4. Mode (`setSessionMode`), model, effort via `setSessionConfigOption`.
 5. `prompt` → `nextUpdate()` loop until `stop`. Every event → collector + progress.
 6. Structured-output re-prompts (§6): step 5 again.
@@ -303,7 +365,7 @@ One mechanism for all harnesses, transport-independent, no network:
 
 ## 7. Limits and guards
 
-- Semaphore per server process: `max_concurrency = 10`. Queue wait doesn't count toward `timeout_s`; while queued we send progress "queued (n)".
+- Semaphore per server process: `max_concurrency = 10`, counted in running turns; idle background sessions hold no slot. Queue wait (semaphore or the session's own queue, §3.3) doesn't count toward `timeout_s`; while queued we send progress "queued (n)".
 - Depth: the server reads `THRONG_MCP_DEPTH` (default 0), sets `+1` for the child; `depth + 1 > max_depth (2)` → tool error `depth_exceeded` before spawn. A nested claude session sees the same user-scope server; the guard exists for it.
 - `timeout_s` default 21600. Handshake 60 s. Elicitation 10 min. All in config.
 - Progress (`notifications/progress`, when a `progressToken` arrived): on every `tool_call` (title), on agent text (at most once per 2 s), heartbeat every 30 s with elapsed time. This keeps Claude Code's idle timeout (30 min) from firing on long turns.
@@ -332,7 +394,7 @@ limits:
 ```
 Config validation with zod; an error goes to stderr at server start and into `list_harnesses.reason`.
 
-Session records: `~/.cache/throng/sessions/<session_id>.json` = `{ harness, model, effort, cwd, created_at, last_used_at }`, keyed by the harness's own ACP session id (UUID-like in all three; collisions across harnesses are not a practical concern). Written when the ACP session exists, updated on every resume. Records survive server restarts.
+Session records: `~/.cache/throng/sessions/<session_id>.json` = `{ harness, model, effort, cwd, description, created_at, last_used_at, turn_started_at?, last_result? | last_error? }`, keyed by the harness's own ACP session id (UUID-like in all three; collisions across harnesses are not a practical concern). Written when the ACP session exists, updated on every turn: `turn_started_at` is set while a turn runs and cleared with the turn's `last_result` (the success payload) or `last_error` (the failure payload). Records survive server restarts; a record with `turn_started_at` set at startup gets `last_error` = interrupted by a server restart (§3.7). The queue is not persisted: messages queued behind a turn that dies with the server are lost, and `list_thronglets` says so through the failed state.
 
 Logs: server stderr has short lines (worker start/stop, errors, every permission decision, each call's outcome). throng keeps no transcripts: the full history of a session is in the harness's own log, found by `session_id` (Claude Code `~/.claude/projects/`, Codex `~/.codex/sessions/`, OpenCode its storage). Rotation: session records older than 14 days are deleted at start.
 
@@ -347,7 +409,7 @@ Logs: server stderr has short lines (worker start/stop, errors, every permission
 ## 10. Stages
 
 - **v1 = MVP**: `run_thronglet` with the `auto` policy, `list_harnesses`, three harnesses. Enough to call it from a real session.
-- **v2**: structured output, `resume_thronglet`, permission policies `allow_all | deny_all | elicit`, messages into a running thronglet (THRONG-9; contract TBD).
+- **v2**: structured output, permission policies `allow_all | deny_all | elicit`, sessions as turns (decision-6): `send_message` with a per-session queue and `steer` replaces `resume_thronglet`, background turns with `wait_thronglet`, `list_thronglets`, `cancel_thronglet` (THRONG-9, 11, 12, 13).
 - Later: §11.
 
 Tasks, their acceptance criteria and dependencies live in Backlog.md: milestones `v1` and `v2` (`backlog task list -m v1 --plain`).

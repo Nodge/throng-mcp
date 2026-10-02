@@ -1,10 +1,10 @@
 ---
 id: THRONG-9
-title: send_thronglet
+title: send_message with a per-session turn queue replaces resume_thronglet
 status: To Do
 assignee: []
 created_date: '2026-09-28 15:33'
-updated_date: '2026-09-28 15:36'
+updated_date: '2026-10-02 09:54'
 labels: []
 milestone: m-1
 dependencies:
@@ -18,27 +18,22 @@ ordinal: 9000
 ## Description
 
 <!-- SECTION:DESCRIPTION:BEGIN -->
-The calling session cannot talk to a thronglet while it works: a correction, an extra constraint or "stop and report what you have" means waiting for the result, or Esc and re-running from scratch with the context lost. Claude Code subagents have `SendMessage` for this; throng needs the same for a live nested session, addressed by its `session_id`.
+A thronglet session is a sequence of turns. Today a turn is started by `run_thronglet` (first) or `resume_thronglet` (next), both synchronous, and nothing stops two callers from resuming one session at once: two adapter processes do `session/resume` on the same id. The background mode (THRONG-11) makes a busy session the normal case, so turns on one session must be serialized by throng itself. Spike 2026-10-02 (`scripts/spike/concurrent-prompt.ts`, notes below): a second `session/prompt` while a turn runs is delivered to the model by all three adapters, but the request/response pairing breaks differently in each (codex-acp never resolves the first prompt), so the queue cannot be left to the adapters.
 
-Today `run_thronglet` is one synchronous call (DESIGN §2.4, §4.2) and returns `session_id` only at the end, so a message tool alone is not enough: the caller has to learn the id of a live thronglet while its `run_thronglet` is still pending (often auto-backgrounded after 120 s).
+Decision-6 fixes the contract: `send_message` is the one tool for a next turn, `resume_thronglet` is removed (v2 is not tagged; one user). `run_thronglet` gets a required `description` so that a session can be told apart in `list_thronglets` and after a server restart; it goes into the session record (DESIGN §8). This task delivers the synchronous form only: `background` and `wait_thronglet` are THRONG-11, `steer` is THRONG-13.
 
-Open questions to settle at pickup, recorded as a backlog decision and in DESIGN §3:
-- How the caller gets the id of a live thronglet (list of live sessions, id in progress, caller-supplied name).
-- Delivery in ACP v1, where `session/prompt` is one turn: queue as the next prompt after the current `stop`, or `session/cancel` + prompt with the message. Check what the three adapters do with a prompt sent while a turn is running.
-- What the send call returns: acknowledgement right away, or the result of the turn it started.
-- A `session_id` not live in this server process: `session_not_found`, or fall back to `resume_thronglet` behavior.
+Queue semantics: FIFO per session, one turn per message, each with its own `schema`/`timeout_s`; a message arriving while a turn runs waits for `stop` and starts the next turn. Every turn runs in a fresh adapter process via `session/resume`, exactly as `resume_thronglet` does today (DESIGN §3.3): no keep-alive worker. A session has a state visible to later tools: `running | queued | idle | failed`. Live state is per server process; the record on disk is what survives.
 
-Scope: DESIGN §3, §4.2, §4.3. Depends on THRONG-7 for the `session_not_found` semantics and the session record.
+Scope: DESIGN §3.2, §3.3, §4, §8 as updated by decision-6. README and the smoke script follow the rename.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 A new tool (contract in DESIGN §3, `ErrorCode` extended if needed) delivers a text message to a thronglet whose `run_thronglet`/`resume_thronglet` call is still in progress, addressed by `session_id`
-- [ ] #2 The caller can obtain the `session_id` of a live thronglet before its `run_thronglet` call returns
-- [ ] #3 The pending `run_thronglet` result reflects the message: the agent sees it and `text` is from the last turn, per the chosen delivery semantics
-- [ ] #4 A `session_id` that is unknown or not live in this server process gives the documented behavior (error code or resume fallback), covered by tests
-- [ ] #5 fake-agent scenario covers delivery to a running session without an LLM
-- [ ] #6 Smoke: a message into a running thronglet on claude, codex and opencode
+- [ ] #1 `run_thronglet` requires `description`; the session record stores it
+- [ ] #2 `send_message({session_id, prompt, schema?, timeout_s?})` runs the next turn of the session synchronously and returns the `run_thronglet` payload; unknown id or a harness without `sessionCapabilities.resume` → `session_not_found`
+- [ ] #3 Two `send_message` calls on one session run one after the other, never two adapter processes on one session at a time; the second call waits in the queue and reports it in progress; covered by a fake-agent test
+- [ ] #4 `resume_thronglet` is gone from the tool list, README, DESIGN and the smoke script; `send_message` takes its place in all of them
+- [ ] #5 Smoke: `run_thronglet` then `send_message` on claude, codex and opencode; the second turn sees the first
 <!-- AC:END -->
 
 ## Definition of Done
@@ -47,3 +42,16 @@ Scope: DESIGN §3, §4.2, §4.3. Depends on THRONG-7 for the `session_not_found`
 - [ ] #2 Gates green: pnpm typecheck && pnpm test
 - [ ] #3 DESIGN.md updated if an external contract (DESIGN §3) changed
 <!-- DOD:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Spike 2026-10-02 (scripts/spike/concurrent-prompt.ts, real harnesses, prompt A runs `sleep 25`, prompt B sent 3-10 s into A):
+
+Concurrent second `session/prompt` while a turn runs: in all three adapters the agent sees B mid-turn (quotes it in the A reply), but request/response pairing is broken differently in each:
+- claude-agent-acp 0.78.0 (claude/sonnet): A resolves end_turn at +29 s before the reply text; the combined text (A-DONE + quoted B) arrives under B, which resolves at +37 s.
+- opencode 1.18.31 (glm-5.3-flash): A and B resolve at the same instant (+33.4 s) with one combined text.
+- codex-acp 1.12.0 (gpt-6-luna): B resolves end_turn at +45 s with the combined text; A never resolves, not even after session/cancel (checked 10 s), only when the worker is closed. Verdict: not a usable contract; throng must serialize prompts per session itself.
+
+Steer = `session/cancel` then prompt B: works on all three. A resolves `cancelled` within 0.3 s; B gets a reply that remembers the interrupted work ("B-ACK running `sleep 25`, interrupted before it finished" on codex; equivalent on claude and opencode). Cost: the in-flight tool call is aborted.
+<!-- SECTION:NOTES:END -->

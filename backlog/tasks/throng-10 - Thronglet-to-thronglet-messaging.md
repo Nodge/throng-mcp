@@ -4,9 +4,11 @@ title: Thronglet-to-thronglet messaging
 status: To Do
 assignee: []
 created_date: '2026-10-01 21:53'
+updated_date: '2026-10-02 09:53'
 labels: []
 dependencies:
   - THRONG-9
+  - THRONG-11
 documentation:
   - docs/DESIGN.md
 ordinal: 10000
