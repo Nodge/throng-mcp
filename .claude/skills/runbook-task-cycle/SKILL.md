@@ -1,6 +1,6 @@
 ---
 name: runbook-task-cycle
-description: One throng-mcp task end to end. Coder, project checks, two independent reviews (Claude and GPT), triage, fix rounds with verification, a polish pass. Inputs taskId, brief, repo, optional coder and maxFixRounds. Leaves the changes uncommitted.
+description: "One throng-mcp task end to end. Coder, project checks, two independent reviews (Claude and GPT), triage, fix rounds with verification, a polish pass. Inputs taskId, brief, repo, optional coder and maxFixRounds. Leaves the changes uncommitted."
 ---
 
 # Task cycle

@@ -1,6 +1,6 @@
 ---
 name: throng
-description: Delegating work to another coding harness or model through throng (run_thronglet, send_message, wait_thronglet, list_thronglets, cancel_thronglet, list_harnesses). Use before any throng tool call, when a task should run on another model (codex, opus, gpt, glm) or get its review or opinion, and when running agents in parallel or in the background.
+description: "Delegating work to another coding harness or model through throng (run_thronglet, send_message, wait_thronglet, list_thronglets, cancel_thronglet, list_harnesses). Use before any throng tool call, when a task should run on another model (codex, opus, gpt, glm) or get its review or opinion, and when running agents in parallel or in the background."
 ---
 
 # Working with thronglets
