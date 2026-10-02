@@ -604,4 +604,42 @@ describe('run_thronglet over stdio', () => {
             await close();
         }
     });
+
+    it('send_message steer: interrupts a running background turn, returns the steered reply; the session ends idle', async () => {
+        const cache = mkdtempSync(join(dir, 'cache-steer-'));
+        const { client, tag, close } = await connect(
+            'steer',
+            { FAKE_MEMORY_DIR: mkdtempSync(join(dir, 'memory-')) },
+            cache
+        );
+        try {
+            const started = await client.callTool({
+                name: 'run_thronglet',
+                arguments: {
+                    agent: 'claude/fake-small',
+                    prompt: 'long task',
+                    cwd: repo,
+                    description: 'steer me',
+                    background: true,
+                },
+            });
+            const { session_id: id, state } = payloadOf(started) as TurnPending;
+            expect(state).toBe('running');
+
+            const steered = await client.callTool({
+                name: 'send_message',
+                arguments: { session_id: id, prompt: 'change of plans', steer: true },
+            });
+            expect(steered.isError).toBe(undefined);
+            expect((payloadOf(steered) as RunSuccess).text).toBe('you said: long task | change of plans');
+            expect(tagAlive(tag)).toBe(false);
+
+            const listed = await client.callTool({ name: 'list_thronglets', arguments: {} });
+            expect((payloadOf(listed) as ListThrongletsOutput).thronglets).toMatchObject([
+                { session_id: id, state: 'idle', queued: 0 },
+            ]);
+        } finally {
+            await close();
+        }
+    });
 });

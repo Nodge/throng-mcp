@@ -158,6 +158,23 @@ describe('smoke script against the fake agent', () => {
         expect(tagAlive(tag), 'fake agent left running').toBe(false);
     });
 
+    it('--steer: a busy background run is steered, the reply has STEERED, list shows idle', async () => {
+        // The fake's reply `you said: <first> | <steer prompt>` echoes the steer prompt, which has the word STEERED.
+        const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--steer'], 'steer', bin, {
+            FAKE_MEMORY_DIR: mkdtempSync(join(dir, 'memory-')),
+        });
+        expect(code, stdout + stderr).toBe(0);
+        expect(stdout).toMatch(/run_thronglet agent=claude\/fake-small .* background, then steer$/m);
+        expect(stdout).toMatch(/PASS: run_thronglet background accepted/);
+        expect(stdout).toMatch(/send_message session_id=\S+ steer/);
+        expect(stdout).toMatch(/PASS: send_message steer answered STEERED/);
+        expect(stdout).toMatch(/PASS: list_thronglets shows the session idle/);
+        expect(stdout).toMatch(/pong\.txt and follow-up steps skipped \(--steer\)/);
+        expect(stdout).toMatch(/PASS: no orphans/);
+        expect(stdout).not.toMatch(/FAIL/);
+        expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
+
     it('--no-follow-up skips the send_message step', async () => {
         const { code, stdout, stderr, tag } = await smoke(
             ['claude/fake-small', '--prompt', 'x', '--no-follow-up'],

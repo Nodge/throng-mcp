@@ -6,7 +6,7 @@ interface Waiter {
     grant: () => void;
 }
 
-/** FIFO counting semaphore; `acquire` resolves with an idempotent release function. */
+/** FIFO counting semaphore (a `front` waiter jumps the queue); `acquire` resolves with an idempotent release function. */
 export class Semaphore {
     readonly #max: number;
     readonly #cancelMessage: string;
@@ -29,8 +29,11 @@ export class Semaphore {
         return this.#queue.length;
     }
 
-    /** Rejects with `cancelled` when `signal` aborts before a slot frees up; the waiter then leaves the queue. */
-    acquire(signal?: AbortSignal): Promise<() => void> {
+    /**
+     * Rejects with `cancelled` when `signal` aborts before a slot frees up; the waiter then leaves the queue. `front`
+     * queues the waiter ahead of the earlier ones.
+     */
+    acquire(signal?: AbortSignal, opts: { front?: boolean } = {}): Promise<() => void> {
         if (signal?.aborted) return Promise.reject(this.#cancelled());
         if (this.#active < this.#max && this.#queue.length === 0) {
             this.#active++;
@@ -48,7 +51,8 @@ export class Semaphore {
                     resolve(this.#releaser());
                 },
             };
-            this.#queue.push(waiter);
+            if (opts.front) this.#queue.unshift(waiter);
+            else this.#queue.push(waiter);
             signal?.addEventListener('abort', onAbort, { once: true });
         });
     }

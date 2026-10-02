@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { fakeHarness, tagAlive, waitFor } from '../test/fake-harness.ts';
 import { ThrongError } from './contract.ts';
 import { sendMessage } from './mcp/tools/send-message.ts';
-import { SessionRegistry } from './registry.ts';
+import { type AcquireOptions, SessionRegistry } from './registry.ts';
 
 const h = fakeHarness('throng-registry-');
 afterAll(() => h.cleanup());
@@ -10,18 +10,28 @@ afterAll(() => h.cleanup());
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const never = new AbortController().signal;
 
+/** `acquire` with a fresh controller unless given; never aborted, ignores onQueued by default. */
+function acq(registry: SessionRegistry, id: string, opts: Partial<AcquireOptions> = {}): Promise<() => void> {
+    return registry.acquire(id, {
+        signal: never,
+        controller: new AbortController(),
+        onQueued: () => undefined,
+        ...opts,
+    });
+}
+
 describe('SessionRegistry', () => {
     it('one holder per session, waiters FIFO; release of the last one deletes the entry', async () => {
         const registry = new SessionRegistry();
         const queued: number[] = [];
         const onQueued = (n: number) => queued.push(n);
         const order: string[] = [];
-        const a = await registry.acquire('s', never, onQueued);
+        const a = await acq(registry, 's', { onQueued });
         expect(registry.busy('s')).toBe(true);
         expect(registry.busy('other')).toBe(false);
-        const b = registry.acquire('s', never, onQueued).then(r => (order.push('b'), r));
-        const c = registry.acquire('s', never, onQueued).then(r => (order.push('c'), r));
-        const d = registry.acquire('s', never, onQueued).then(r => (order.push('d'), r));
+        const b = acq(registry, 's', { onQueued }).then(r => (order.push('b'), r));
+        const c = acq(registry, 's', { onQueued }).then(r => (order.push('c'), r));
+        const d = acq(registry, 's', { onQueued }).then(r => (order.push('d'), r));
         expect(queued).toStrictEqual([1, 2, 3]);
         expect(registry.waiting('s')).toBe(3);
         await tick();
@@ -46,8 +56,8 @@ describe('SessionRegistry', () => {
     it('other sessions are not blocked', async () => {
         const registry = new SessionRegistry();
         const queued: number[] = [];
-        const a = await registry.acquire('a', never, n => queued.push(n));
-        const b = await registry.acquire('b', never, n => queued.push(n));
+        const a = await acq(registry, 'a', { onQueued: n => queued.push(n) });
+        const b = await acq(registry, 'b', { onQueued: n => queued.push(n) });
         expect(queued).toStrictEqual([]);
         a();
         b();
@@ -55,9 +65,9 @@ describe('SessionRegistry', () => {
 
     it('abort while waiting → cancelled, the waiter leaves the queue', async () => {
         const registry = new SessionRegistry();
-        const release = await registry.acquire('s', never, () => undefined);
+        const release = await acq(registry, 's');
         const controller = new AbortController();
-        const waiting = registry.acquire('s', controller.signal, () => undefined);
+        const waiting = acq(registry, 's', { signal: controller.signal });
         expect(registry.waiting('s')).toBe(1);
         controller.abort();
         const err = await waiting.catch((e: unknown) => e);
@@ -68,7 +78,7 @@ describe('SessionRegistry', () => {
         release();
         expect(registry.busy('s')).toBe(false);
 
-        const aborted = registry.acquire('s', controller.signal, () => undefined);
+        const aborted = acq(registry, 's', { signal: controller.signal });
         await expect(aborted).rejects.toThrow(/session's running turn/);
         expect(registry.busy('s'), 'an already-aborted call leaves no entry').toBe(false);
     });
@@ -76,8 +86,8 @@ describe('SessionRegistry', () => {
     it('idle(id) resolves at once when not busy, otherwise after the last holder and waiter are gone', async () => {
         const registry = new SessionRegistry();
         await registry.idle('s');
-        const a = await registry.acquire('s', never, () => undefined);
-        const b = registry.acquire('s', never, () => undefined);
+        const a = await acq(registry, 's');
+        const b = acq(registry, 's');
         let idle = false;
         const waiting = registry.idle('s').then(() => (idle = true));
         a();
@@ -89,22 +99,97 @@ describe('SessionRegistry', () => {
         expect(idle).toBe(true);
     });
 
-    it('attachTurn: retrievable while the session is busy, detached on demand; a no-op on an idle session', async () => {
+    it('holder() is the controller of the acquire holding the lock; turns() = holder + waiters in order', async () => {
         const registry = new SessionRegistry();
-        const idleController = new AbortController();
-        registry.attachTurn('s', idleController)();
+        expect(registry.holder('s')).toBe(undefined);
         expect(registry.turns('s')).toStrictEqual([]);
+        const [a, b, c] = [new AbortController(), new AbortController(), new AbortController()];
+        const releaseA = await acq(registry, 's', { controller: a });
+        expect(registry.holder('s')).toBe(a);
+        const bLock = acq(registry, 's', { controller: b });
+        const cLock = acq(registry, 's', { controller: c });
+        expect(registry.holder('s')).toBe(a);
+        expect(registry.turns('s')).toStrictEqual([a, b, c]);
 
-        const release = await registry.acquire('s', never, () => undefined);
-        const first = new AbortController();
-        const second = new AbortController();
-        const detachFirst = registry.attachTurn('s', first);
-        registry.attachTurn('s', second);
-        expect(registry.turns('s')).toStrictEqual([first, second]);
-        detachFirst();
-        expect(registry.turns('s')).toStrictEqual([second]);
-        release();
+        releaseA();
+        const releaseB = await bLock;
+        expect(registry.holder('s')).toBe(b);
+        expect(registry.turns('s')).toStrictEqual([b, c]);
+        releaseB();
+        const releaseC = await cLock;
+        expect(registry.turns('s')).toStrictEqual([c]);
+        releaseC();
+        expect(registry.holder('s')).toBe(undefined);
         expect(registry.turns('s')).toStrictEqual([]);
+    });
+
+    it('detachTurn removes the holder from holder()/turns() without releasing the lock', async () => {
+        const registry = new SessionRegistry();
+        const [a, b] = [new AbortController(), new AbortController()];
+        const releaseA = await acq(registry, 's', { controller: a });
+        let bGranted = false;
+        const bLock = acq(registry, 's', { controller: b }).then(r => ((bGranted = true), r));
+        registry.detachTurn('s', a);
+        expect(registry.holder('s')).toBe(undefined);
+        expect(registry.turns('s')).toStrictEqual([b]);
+        await tick();
+        expect(bGranted, 'the lock stays with A').toBe(false);
+        expect(registry.busy('s')).toBe(true);
+        releaseA();
+        (await bLock)();
+        registry.detachTurn('idle', a);
+    });
+
+    it('a front acquire is granted before the earlier waiters, which keep their order', async () => {
+        const registry = new SessionRegistry();
+        const [a, b, c, s] = [
+            new AbortController(),
+            new AbortController(),
+            new AbortController(),
+            new AbortController(),
+        ];
+        const order: string[] = [];
+        const positions: number[] = [];
+        const releaseA = await acq(registry, 's', { controller: a });
+        const bLock = acq(registry, 's', { controller: b }).then(r => (order.push('b'), r));
+        const cLock = acq(registry, 's', { controller: c }).then(r => (order.push('c'), r));
+        const sLock = acq(registry, 's', { controller: s, front: true, onQueued: n => positions.push(n) }).then(
+            r => (order.push('s'), r)
+        );
+        expect(positions).toStrictEqual([1]);
+        expect(registry.waiting('s')).toBe(3);
+        expect(registry.turns('s')).toStrictEqual([a, s, b, c]);
+
+        releaseA();
+        const releaseS = await sLock;
+        expect(registry.holder('s')).toBe(s);
+        releaseS();
+        (await bLock)();
+        (await cLock)();
+        expect(order).toStrictEqual(['s', 'b', 'c']);
+        expect(registry.busy('s')).toBe(false);
+    });
+
+    it('a front acquire on an idle session resolves at once', async () => {
+        const registry = new SessionRegistry();
+        const queued: number[] = [];
+        const s = new AbortController();
+        const release = await acq(registry, 's', { controller: s, front: true, onQueued: n => queued.push(n) });
+        expect(queued).toStrictEqual([]);
+        expect(registry.holder('s')).toBe(s);
+        release();
+    });
+
+    it('a waiter that aborts leaves turns()', async () => {
+        const registry = new SessionRegistry();
+        const [a, b] = [new AbortController(), new AbortController()];
+        const releaseA = await acq(registry, 's', { controller: a });
+        const bLock = acq(registry, 's', { controller: b, signal: b.signal });
+        expect(registry.turns('s')).toStrictEqual([a, b]);
+        b.abort();
+        await expect(bLock).rejects.toThrow(/session's running turn/);
+        expect(registry.turns('s')).toStrictEqual([a]);
+        releaseA();
     });
 
     it("turns(): runCall's controllers of a running synchronous turn and a queued one; aborting them ends both", async () => {

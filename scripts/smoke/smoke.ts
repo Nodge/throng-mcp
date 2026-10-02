@@ -26,10 +26,13 @@ import type {
 // With --cancel the run goes to the background and is cancelled right away (DESIGN §3.7, §3.8): list_thronglets shows it
 // running, cancel_thronglet stops it, wait_thronglet returns `cancelled`, list_thronglets shows it failed; the pong.txt
 // and follow-up checks are skipped.
+// With --steer the run goes to the background on a prompt that keeps it busy, and a send_message with `steer: true`
+// interrupts it (DESIGN §3.3): its reply must contain STEERED, then list_thronglets shows the session idle; the pong.txt
+// and follow-up checks are skipped.
 // Spends tokens: run by hand, one harness at a time. Exit: 0 pass, 1 any FAIL or tool error, 2 usage/availability.
 
 const USAGE =
-    'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-follow-up] [--schema] [--background] [--cancel]';
+    'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-follow-up] [--schema] [--background] [--cancel] [--steer]';
 const DEFAULT_PROMPT =
     'Create a file named pong.txt in the current directory containing exactly the word pong (no newline needed), then reply with the single word: done.';
 const SCHEMA_PROMPT =
@@ -40,6 +43,9 @@ const SMOKE_SCHEMA = {
     properties: { file: { type: 'string' }, content: { type: 'string' } },
     required: ['file', 'content'],
 };
+const STEER_RUN_PROMPT =
+    'Run the shell command `sleep 60` as one tool call and wait for it; then write pong.txt with "pong".';
+const STEER_PROMPT = 'Stop what you are doing. Reply with exactly one line: "STEERED" followed by what you were doing.';
 const FOLLOW_UP_PROMPT = 'Which file did you create in the previous step? Reply with the bare file name only.';
 const DEFAULT_TIMEOUT_S = 300;
 // submit-tool: the structured-output server the harness spawns; its argv carries the run's temp dir under our TMPDIR.
@@ -75,6 +81,7 @@ try {
             schema: { type: 'boolean' },
             background: { type: 'boolean' },
             cancel: { type: 'boolean' },
+            steer: { type: 'boolean' },
         },
     });
 } catch (err) {
@@ -256,6 +263,53 @@ async function cancelSteps(args: Record<string, unknown>): Promise<void> {
     console.log('   pong.txt and follow-up steps skipped (--cancel)');
 }
 
+/** --steer: a background run_thronglet that stays busy, then a synchronous steer and list_thronglets. */
+async function steerSteps(args: Record<string, unknown>): Promise<void> {
+    const accepted = await client.callTool(
+        { name: 'run_thronglet', arguments: { ...args, background: true } },
+        CallToolResultSchema,
+        { timeout: 300_000 }
+    );
+    if (accepted.isError === true) {
+        const { payload } = printResult(accepted);
+        fails.push(`run_thronglet failed with ${payload.code}`);
+        return;
+    }
+    console.log(`   pending: ${textOf(accepted)}`);
+    const pending = JSON.parse(textOf(accepted)) as Partial<TurnPending>;
+    const id = pending.session_id;
+    check(
+        typeof id === 'string' && pending.state === 'running',
+        'run_thronglet background accepted',
+        `run_thronglet background answered ${textOf(accepted).slice(0, 200)}, expected state running`
+    );
+
+    say(`send_message session_id=${id} steer timeout_s=${timeoutS}`);
+    const steered = await client.callTool(
+        { name: 'send_message', arguments: { session_id: id, prompt: STEER_PROMPT, steer: true, timeout_s: timeoutS } },
+        CallToolResultSchema,
+        { timeout: (timeoutS + 60) * 1000 }
+    );
+    const result = printResult(steered);
+    const text = result.payload.text ?? '';
+    check(
+        !result.isError && text.includes('STEERED'),
+        'send_message steer answered STEERED',
+        result.isError
+            ? `send_message steer failed with ${result.payload.code}`
+            : `send_message steer answered ${JSON.stringify(text.slice(0, 200))}, expected STEERED`
+    );
+
+    say('list_thronglets');
+    const row = await listedRow(id);
+    check(
+        row?.state === 'idle',
+        'list_thronglets shows the session idle',
+        `list_thronglets row is ${JSON.stringify(row)}, expected state idle`
+    );
+    console.log('   pong.txt and follow-up steps skipped (--steer)');
+}
+
 function table(rows: string[][]): string {
     const widths = rows[0]?.map((_, i) => Math.max(...rows.map(r => (r[i] ?? '').length))) ?? [];
     return rows
@@ -340,6 +394,17 @@ try {
             agent,
             prompt: values.prompt ?? DEFAULT_PROMPT,
             description: 'smoke: ping/pong',
+            cwd,
+            timeout_s: timeoutS,
+        });
+    } else if (values.steer === true) {
+        cwd = userCwd ?? mkdtempSync(join(tmpdir(), 'throng-smoke-'));
+        createdCwd = userCwd === undefined;
+        say(`run_thronglet agent=${agent} cwd=${cwd} timeout_s=${timeoutS} background, then steer`);
+        await steerSteps({
+            agent,
+            prompt: values.prompt ?? STEER_RUN_PROMPT,
+            description: 'smoke: steer',
             cwd,
             timeout_s: timeoutS,
         });

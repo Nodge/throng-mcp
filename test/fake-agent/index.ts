@@ -22,6 +22,7 @@ export type FakeScenario =
     | 'max-turns'
     | 'write-pong'
     | 'resume-memory'
+    | 'steer'
     | 'submit-valid'
     | 'submit-invalid-then-valid'
     | 'submit-missing'
@@ -29,7 +30,9 @@ export type FakeScenario =
     | 'submit-ask';
 
 // Knobs besides FAKE_SCENARIO (env of the agent process): FAKE_TURN_MS — an echo turn takes that long before answering
-// (default 0); FAKE_MEMORY_DIR — where resume-memory keeps its notes; FAKE_SUBMIT — the valid submit_result (JSON).
+// (default 0); FAKE_MEMORY_DIR — where resume-memory and steer keep their notes; FAKE_SUBMIT — the valid submit_result (JSON).
+// steer: every turn appends its prompt to the session's notes; the session's first turn then hangs until session/cancel,
+// every later one replies `you said: <notes joined ' | '>`.
 
 const agentPath = fileURLToPath(new URL('./agent.ts', import.meta.url));
 

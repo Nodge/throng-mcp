@@ -26,6 +26,22 @@ describe('Semaphore', () => {
         releaseD();
     });
 
+    it('a front waiter is granted before the earlier ones; the rest stay FIFO', async () => {
+        const sem = new Semaphore(1);
+        const first = await sem.acquire();
+        const order: string[] = [];
+        const b = sem.acquire().then(r => (order.push('b'), r));
+        const c = sem.acquire().then(r => (order.push('c'), r));
+        const f = sem.acquire(undefined, { front: true }).then(r => (order.push('f'), r));
+        expect(sem.waiting).toBe(3);
+        first();
+        (await f)();
+        (await b)();
+        (await c)();
+        expect(order).toStrictEqual(['f', 'b', 'c']);
+        expect(sem.waiting).toBe(0);
+    });
+
     it('abort while queued rejects cancelled and frees the queue position', async () => {
         const sem = new Semaphore(1);
         const first = await sem.acquire();

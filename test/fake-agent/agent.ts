@@ -39,7 +39,7 @@ interface FakeSession {
 
 const sessions = new Map<string, FakeSession>();
 
-// resume-memory: one call = one fake-agent process, so what a session remembers lives on disk.
+// resume-memory, steer: one call = one fake-agent process, so what a session remembers lives on disk.
 const memoryDir = process.env.FAKE_MEMORY_DIR ?? join(tmpdir(), 'throng-fake-agent');
 const notesPath = (sessionId: string) => join(memoryDir, `${sessionId}.json`);
 
@@ -55,6 +55,11 @@ async function readNotes(sessionId: string): Promise<string[] | undefined> {
 async function writeNotes(sessionId: string, notes: string[]): Promise<void> {
     await mkdir(memoryDir, { recursive: true });
     await writeFile(notesPath(sessionId), JSON.stringify({ notes }));
+}
+
+/** The task itself, without the executor prefix every prompt carries. */
+function withoutPrefix(text: string): string {
+    return text.startsWith(`${EXECUTOR_PREFIX}\n\n`) ? text.slice(EXECUTOR_PREFIX.length + 2) : text;
 }
 
 /** Scenarios that end the turn with something other than end_turn. */
@@ -204,9 +209,7 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
             const suffix = ` [model=${optionValue(session, 'model')} effort=${optionValue(session, 'effort')}]`;
             if (session.resumed) await say(`you said: ${notes.join(' | ')}${suffix}`);
             else {
-                // The note is the task itself, without the executor prefix every prompt carries.
-                const task = text.startsWith(`${EXECUTOR_PREFIX}\n\n`) ? text.slice(EXECUTOR_PREFIX.length + 2) : text;
-                await writeNotes(sessionId, [...notes, task]);
+                await writeNotes(sessionId, [...notes, withoutPrefix(text)]);
                 await say(`noted${suffix}`);
             }
             session.cost += 0.01;
@@ -216,6 +219,19 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
                 size: 1000,
                 cost: { amount: Number(session.cost.toFixed(2)), currency: 'USD' },
             });
+            return;
+        }
+        case 'steer': {
+            const notes = [...((await readNotes(sessionId)) ?? []), withoutPrefix(text)];
+            await writeNotes(sessionId, notes);
+            if (notes.length === 1) {
+                // The cancel may have arrived during the note I/O above: a listener alone would then never fire.
+                if (signal.aborted) throw new Error('cancelled');
+                await new Promise((_, reject) =>
+                    signal.addEventListener('abort', () => reject(new Error('cancelled')))
+                );
+            }
+            await say(`you said: ${notes.join(' | ')}`);
             return;
         }
         case 'submit-valid': {

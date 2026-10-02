@@ -134,12 +134,15 @@ The next message into an earlier nested session, e.g. "now fix what the review f
   timeout_s?: number;    // default from config limits.timeout_s
   schema?: object;       // structured output, as in run_thronglet
   background?: boolean;  // as in run_thronglet
+  steer?: boolean;       // interrupt the running turn, run this message next
 }
 ```
 
 Harness, model, effort and `cwd` come from the session record written by `run_thronglet` (see [Files on disk](#files-on-disk)); the caller doesn't repeat them. Each call starts a fresh adapter process, which picks the session up with ACP `session/resume`: the nested session's context is the harness's own, throng replays no history. Permission mode, model and effort are applied again, as for a new run. The result is the same payload as `run_thronglet`, with the same `session_id`; the same failure codes apply, plus `session_not_found` when there is no record for the id (records live 14 days) or the harness refuses to resume it.
 
 Turns on one session run one after another: a message to a session whose turn is still running waits for that turn to end and reports `queued` in progress. The wait doesn't count toward `timeout_s` (or `duration_s`).
+
+`steer: true` is the way to reach a running turn: throng cancels it (ACP `session/cancel`, then the adapter is closed) and runs this message as the very next turn, ahead of anything already queued; the queued messages run after it, in their order. The cancelled turn ends with `cancelled` ("cancelled by steer"), which its own caller gets; the steered turn's result then becomes the session's last result. The cost: the tool call in flight is aborted, and a half-applied edit may remain in the tree. The agent's next reply still knows what it was doing, as far as the harness kept it (checked on all three adapters). With `background: true` a steer on a running session is accepted as `queued` (the cancelled turn has to end first). On an idle session `steer` changes nothing.
 
 ### Background turns and `wait_thronglet`
 
@@ -258,6 +261,7 @@ pnpm smoke:claude -- --no-follow-up                    # skip the send_message s
 pnpm smoke:claude -- --schema                          # run_thronglet with a schema {file, content}
 pnpm smoke:claude -- --background                      # both turns with background: true, results via wait_thronglet
 pnpm smoke:claude -- --cancel                          # background run, list_thronglets, cancel_thronglet, wait_thronglet
+pnpm smoke:claude -- --steer                           # background run kept busy by `sleep 60`, then send_message steer
 ```
 
 The script starts the server, prints the `list_harnesses` table (versions, model counts, efforts, commands, unavailable reasons, limits), runs `run_thronglet` in a fresh temp dir asking the agent to write `pong.txt`, prints the payload, then checks:
@@ -267,6 +271,7 @@ The script starts the server, prints the `list_harnesses` table (versions, model
 - `PASS: send_message answered pong.txt` / `FAIL: send_message …`: a `send_message` into the same session asks which file it created; its payload is printed and the answer must mention `pong.txt`. Skipped when the run failed, or with `--no-follow-up` (e.g. with a custom `--prompt`).
 - `PASS: run_thronglet background accepted` / `PASS: send_message background accepted`: with `--background` only; the call answered `{session_id, state, queued}` (printed as `pending:`), and `wait_thronglet` then delivers the payload the checks above run on.
 - With `--cancel` instead of the pong.txt and follow-up checks: `PASS: run_thronglet background accepted`, `PASS: list_thronglets shows the turn running` (the row has description `smoke: ping/pong`), `PASS: cancel_thronglet cancelled the turn` (`cancelled_turn: true`), `PASS: wait_thronglet returned cancelled`, `PASS: list_thronglets shows the turn failed with cancelled`.
+- With `--steer` instead of the pong.txt and follow-up checks: `PASS: run_thronglet background accepted` (the prompt asks for `sleep 60` as one tool call, so there is a turn to interrupt), `PASS: send_message steer answered STEERED` (a synchronous `send_message` with `steer: true` asks for a line starting with STEERED and what the agent was doing; the payload is printed), `PASS: list_thronglets shows the session idle`.
 - `PASS: no orphans` / `FAIL: orphaned adapter processes: <pids>`: no new `claude-agent-acp`, `codex-acp`, `opencode acp` or `submit-tool` process is alive 3 s after the client closed. `FAIL: cannot check orphans (…)` when `pgrep` is missing or fails.
 
 Exit code: 0 all passed; 1 a FAIL or a tool error; 2 bad usage, harness unavailable or unknown model (the valid models are printed). Server stderr is prefixed `[server]`, progress `[progress]`. The temp dir is removed on success and kept (path printed) on failure.

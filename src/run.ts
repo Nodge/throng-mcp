@@ -59,6 +59,7 @@ export type RunOutcome = { ok: true; payload: RunSuccess } | { ok: false; payloa
 export const DEFAULT_CANCEL_GRACE_MS = 5000;
 const QUEUE_WARNING_MS = 1000;
 const CANCELLED_BY_TOOL = 'cancelled by cancel_thronglet';
+const CANCELLED_BY_STEER = 'cancelled by steer';
 const MAX_CORRECTIVE_PROMPTS = 2;
 /** Stop reasons after which a missing or rejected structured result gets a corrective prompt (DESIGN §6). */
 const CORRECTABLE_STOPS: readonly string[] = ['end_turn', 'max_tokens', 'max_turn_requests'];
@@ -78,6 +79,8 @@ export interface Call {
     schema: JsonSchemaObject | undefined;
     timeout_s: number | undefined;
     logFields: Record<string, unknown>;
+    /** send_message's steer (DESIGN §3.3): cancel the session's running turn and take the lock next. */
+    steer?: boolean;
     /** Throws a ThrongError when there is nothing to start (bad agent spec, no session record). */
     request: () => Promise<RunRequest>;
 }
@@ -91,11 +94,16 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
 
     const warnings: string[] = [];
     const collector = new Collector();
-    // The turn's own controller on the session's registry entry: cancel_thronglet aborts it (DESIGN §3.8).
+    // The turn's own controller on the session's registry entry: cancel_thronglet aborts it (DESIGN §3.8), a steer
+    // aborts it with its message as the reason (§3.3).
     const cancel = new AbortController();
     const signal = AbortSignal.any([ctx.signal, cancel.signal]);
+    const cancelledByTool = () => {
+        const reason: unknown = cancel.signal.reason;
+        return typeof reason === 'string' ? reason : CANCELLED_BY_TOOL;
+    };
     const lifecycle = new RunLifecycle(signal, () =>
-        cancel.signal.aborted ? CANCELLED_BY_TOOL : 'cancelled by the client'
+        cancel.signal.aborted ? cancelledByTool() : 'cancelled by the client'
     );
     let bridge: PermissionBridge | undefined;
     let sessionId: string | undefined;
@@ -185,16 +193,24 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         // Queue wait (the session's own queue, then the semaphore) counts neither toward timeout_s nor toward
         // duration_s (DESIGN §7). Session lock first: a turn waiting for its session holds no slot.
         const onQueued = (behind: 'session' | 'slot') => (waiting: number) => ctx.progress.queued(waiting, behind);
-        // `acquire` creates the registry entry synchronously: `cancel` is on it before the call starts to wait.
-        const lockSession = async (id: string) => {
-            const acquiring = ctx.sessions.acquire(id, signal, onQueued('session'));
-            detachTurn = ctx.sessions.attachTurn(id, cancel);
-            unlockSession = await acquiring;
+        // `acquire` puts `cancel` on the registry entry synchronously, before the call starts to wait.
+        const lockSession = async (id: string, front = false) => {
+            detachTurn = () => ctx.sessions.detachTurn(id, cancel);
+            unlockSession = await ctx.sessions.acquire(id, {
+                signal,
+                controller: cancel,
+                onQueued: onQueued('session'),
+                front,
+            });
             lockedId = id;
         };
         const queuedAt = now();
         try {
-            if (request.kind === 'resume') await lockSession(request.sessionId);
+            if (request.kind === 'resume') {
+                // Steer: only the running turn is cancelled; the queued ones run after this one.
+                if (call.steer && !signal.aborted) ctx.sessions.holder(request.sessionId)?.abort(CANCELLED_BY_STEER);
+                await lockSession(request.sessionId, call.steer);
+            }
             await lifecycle.acquire(ctx.semaphore, onQueued('slot'));
         } finally {
             waitedMs = now() - queuedAt;
@@ -384,8 +400,10 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
     // The outcome is fixed here: from now on cancel_thronglet finds nothing to cancel. One that came after the last
     // guard but before this point still wins, so its `cancelled_turn: true` and the recorded outcome agree.
     detachTurn?.();
-    if (outcome.ok && cancel.signal.aborted) {
-        outcome = { ok: false, payload: failure(new ThrongError('cancelled', CANCELLED_BY_TOOL)) };
+    // A cancel_thronglet / steer abort names itself, whichever wait it interrupted (a slot wait has its own message).
+    if (cancel.signal.aborted) {
+        if (outcome.ok) outcome = { ok: false, payload: failure(new ThrongError('cancelled', cancelledByTool())) };
+        else if (outcome.payload.code === 'cancelled') outcome.payload.message = cancelledByTool();
     }
 
     try {

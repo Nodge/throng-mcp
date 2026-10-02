@@ -41,12 +41,9 @@ function code(outcome: RunOutcome | { pending: TurnPending }): string {
 /** A registry that calls `onDetach` with the turn's controller when runCall detaches it, i.e. when the outcome is fixed. */
 class DetachHookRegistry extends SessionRegistry {
     onDetach: ((controller: AbortController) => void) | undefined;
-    override attachTurn(sessionId: string, controller: AbortController): () => void {
-        const detach = super.attachTurn(sessionId, controller);
-        return () => {
-            this.onDetach?.(controller);
-            detach();
-        };
+    override detachTurn(sessionId: string, controller: AbortController): void {
+        this.onDetach?.(controller);
+        super.detachTurn(sessionId, controller);
     }
 }
 
@@ -120,7 +117,7 @@ describe('cancelThronglet', () => {
         expect(code(aOut)).toBe('cancelled');
         expect(bOut).toMatchObject({
             ok: false,
-            payload: { code: 'cancelled', message: "cancelled while waiting for the session's running turn to end" },
+            payload: { code: 'cancelled', message: 'cancelled by cancel_thronglet' },
         });
         expect(ctx.sessions.waiting('fake-q')).toBe(0);
         expect(ctx.sessions.busy('fake-q')).toBe(false);
@@ -201,7 +198,11 @@ describe('cancelThronglet', () => {
 
     it('a holder that does not stop within stopMs → agent_error', async () => {
         const ctx = h.makeCtx(h.fakeClaude('echo').loaded);
-        const release = await ctx.sessions.acquire('fake-stuck', new AbortController().signal, () => undefined);
+        const release = await ctx.sessions.acquire('fake-stuck', {
+            signal: new AbortController().signal,
+            controller: new AbortController(),
+            onQueued: () => undefined,
+        });
         try {
             const err = await rejection(cancelThronglet('fake-stuck', deps(ctx, { stopMs: 1000 })));
             expect(err.code).toBe('agent_error');
