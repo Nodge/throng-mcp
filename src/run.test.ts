@@ -29,6 +29,7 @@ import type { RunContext, RunOutcome } from './run.ts';
 import { Semaphore } from './semaphore.ts';
 import { type SessionRecord, writeSessionRecord } from './sessions.ts';
 import type { FakeScenario } from '../test/fake-agent/index.ts';
+import { submitTool } from '../test/fake-harness.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'throng-run-'));
 const fakeAgent = fileURLToPath(new URL('../test/fake-agent/agent.ts', import.meta.url));
@@ -108,6 +109,7 @@ function makeCtx(loaded: LoadedConfig, overrides: Partial<RunContext> = {}): Run
         progress: noProgress,
         env,
         cacheDir: mkdtempSync(join(root, 'cache-')),
+        submitTool,
         cancelGraceMs: 1000,
         exitGraceMs: 300,
         ...overrides,

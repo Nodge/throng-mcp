@@ -3,7 +3,6 @@ import { statSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Collector } from './acp/collector.ts';
 import type { WorkerHooks } from './acp/types.ts';
 import { startWorker } from './acp/worker.ts';
@@ -53,6 +52,8 @@ export interface RunContext {
     env?: NodeJS.ProcessEnv;
     now?: () => number;
     cacheDir: string;
+    /** Absolute path of the submit tool (src/structured/submit-tool.ts, or its dist/ build), spawned for `schema` runs. */
+    submitTool: string;
     /** How long a cancelled prompt may take to settle before the worker is closed; 5000 by default. */
     cancelGraceMs?: number;
     /** Passed to the Worker (stdin close → SIGTERM → SIGKILL steps); the Worker's default otherwise. */
@@ -72,7 +73,6 @@ const CANCELLED_BY_STEER = 'cancelled by steer';
 const MAX_CORRECTIVE_PROMPTS = 2;
 /** Stop reasons after which a missing or rejected structured result gets a corrective prompt (DESIGN §6). */
 const CORRECTABLE_STOPS: readonly string[] = ['end_turn', 'max_tokens', 'max_turn_requests'];
-const SUBMIT_TOOL = fileURLToPath(new URL('./structured/submit-tool.ts', import.meta.url));
 
 /** What to start: a new session from the agent spec, or an earlier one from its session record. */
 export type RunRequest =
@@ -248,7 +248,7 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
             mcpServers.push({
                 name: 'throng_result',
                 command: process.execPath,
-                args: [SUBMIT_TOOL, '--schema', schemaPath, '--out', outPath],
+                args: [ctx.submitTool, '--schema', schemaPath, '--out', outPath],
                 env: [],
             });
         }

@@ -26,12 +26,14 @@ jobs:
               run: pnpm run ci:typecheck
             - name: Prettier
               run: pnpm run ci:fmt
+            - name: Build
+              run: pnpm run ci:build
 
     test:
         needs: [lint]
         strategy:
             matrix:
-                node-version: [24.x, 26.x]
+                node-version: [22.x, 24.x, 26.x]
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4

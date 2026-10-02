@@ -1,20 +1,16 @@
-import { accessSync, constants, readFileSync, statSync } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import type { Config } from '../config.ts';
 import type { HarnessId } from '../contract.ts';
+import snapshot from '../../data/registry.json' with { type: 'json' };
 import type { HarnessResolution, RegistrySnapshot } from './types.ts';
 
 // Adapter discovery shared by the harness definitions (DESIGN §4.1, decision-3).
 // Kept apart from index.ts so the definitions can import it without an import cycle.
 
-let registry: RegistrySnapshot | undefined;
-
-/** data/registry.json, read once. */
+/** data/registry.json; the bundle inlines it. */
 export function loadRegistry(): RegistrySnapshot {
-    registry ??= JSON.parse(
-        readFileSync(new URL('../../data/registry.json', import.meta.url), 'utf8')
-    ) as RegistrySnapshot;
-    return registry;
+    return snapshot;
 }
 
 function isExecutableFile(path: string): boolean {

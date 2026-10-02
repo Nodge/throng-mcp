@@ -7,13 +7,21 @@ For maintainers. Users start with [README.md](../README.md); the design and the 
 - Gates: `pnpm typecheck && pnpm lint && pnpm test`. The pre-commit hook (lefthook, installed by `pnpm install`) formats with prettier, runs `eslint --fix` and typecheck.
 - Tests are vitest, next to the code (`src/**/*.test.ts`). They drive `test/fake-agent` (an ACP agent with scripted scenarios) and never call an LLM; real harnesses only in `scripts/smoke/`, run by hand. `src/skill.test.ts` keeps `skills/throng/SKILL.md` to the existing tool names and error codes.
 
+## Build and package
+
+- `pnpm build` (tsdown, config in `tsdown.config.ts`) writes `dist/mcp.js`, the bin, and `dist/structured/submit-tool.js`, spawned for `schema` runs; shared code may land in a chunk under `dist/`. `ci:build` is the same for CI; `prepack` runs it, so `pnpm pack` and `pnpm publish` always ship a fresh build. `dist/` is ignored by git, prettier and eslint.
+- Why a build: Node refuses to strip types under `node_modules`, so the package can't ship `src/`. Development, tests and smoke keep running the sources (`node src/mcp.ts`, Node >= 22.18 or 24); the published package needs Node `^22.13 || >=24`.
+- The version from `package.json` and `data/registry.json` are JSON imports, inlined at build time: a registry update needs a rebuild, and `data/` is not in the package.
+- `src/mcp.ts` resolves the submit tool's path from its own location (`.ts` next to the sources, `.js` in `dist/`) and passes it down as `RunContext.submitTool`.
+- The tarball holds `dist/`, `skills/`, `docs/`, `README.md`, `LICENSE` and `package.json`. `pnpm pack --dry-run` lists it; `scripts/pack.test.ts` (in `pnpm test`) packs it into a temp dir, checks that list, and runs `node dist/mcp.js` from the unpacked package against the fake agent: `list_harnesses` and a `run_thronglet` with a `schema`.
+
 ## Files on disk
 
 - `~/.cache/throng/sessions/<session_id>.json`: one record per session (`harness, model, effort, cwd, description, created_at, last_used_at`), read by `send_message`, `wait_thronglet` and `list_thronglets`. Every turn also writes `turn_started_at` and `turn_pid` (the server process running it) while it runs, then replaces them with `last_result` (the success payload) or `last_error` (the failure payload) and updates `last_used_at`. At start the server gives every record whose `turn_pid` is gone the interrupted `last_error`.
 - Records are rotated at server start: files older than 14 days are deleted.
 - Server logs are short lines on stderr (start/stop, permission decisions, each run's outcome, errors); the MCP client decides where they end up.
 - throng keeps no transcripts: the harness logs every session itself, find it by `session_id`.
-- `data/registry.json` in the repo is a verbatim snapshot of the ACP registry, https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json, taken 2026-09-27. It supplies the adapters' launch `args`/`env` and the install hints ([DESIGN §2.3](DESIGN.md#23-adapters), [§4.1](DESIGN.md#41-harnesses-and-discovery)).
+- `data/registry.json` in the repo is a verbatim snapshot of the ACP registry, https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json, taken 2026-09-27, inlined into the bundle at build time. It supplies the adapters' launch `args`/`env` and the install hints ([DESIGN §2.3](DESIGN.md#23-adapters), [§4.1](DESIGN.md#41-harnesses-and-discovery)).
 
 ## Smoke
 

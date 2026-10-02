@@ -26,6 +26,8 @@ export interface ToolDeps {
     /** One per process: the per-session turn queue (DESIGN §3.3). */
     sessions: SessionRegistry;
     cacheDir: string;
+    /** See RunContext.submitTool. */
+    submitTool: string;
 }
 
 /** What a tool file gets to register itself. */
@@ -59,7 +61,7 @@ export interface Tools {
 
 /** Registers every tool; one file per tool under tools/. Every result is one JSON text block (decision-2). */
 export function registerTools(server: McpServer, deps: ToolDeps): Tools {
-    const { loaded, semaphore, sessions, cacheDir } = deps;
+    const { loaded, semaphore, sessions, cacheDir, submitTool } = deps;
     const inflight = new Set<Promise<unknown>>();
     const track = <T>(call: Promise<T>): Promise<T> => {
         inflight.add(call);
@@ -97,6 +99,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): Tools {
                     signal: extra.signal,
                     progress,
                     cacheDir,
+                    submitTool,
                     ...elicitation(),
                 })
             );
@@ -109,7 +112,7 @@ export function registerTools(server: McpServer, deps: ToolDeps): Tools {
             const progress = createProgress(extra);
             const result = await startBackground(
                 start,
-                { loaded, depth: readDepth(), semaphore, sessions, cacheDir, ...elicitation() },
+                { loaded, depth: readDepth(), semaphore, sessions, cacheDir, submitTool, ...elicitation() },
                 { ...(sessionId !== undefined ? { sessionId } : {}), track, progress, signal: extra.signal }
             );
             if (!extra.signal.aborted) await progress.idle();

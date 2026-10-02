@@ -3,18 +3,45 @@
     "version": "0.1.0",
     "description": "MCP server that delegates coding tasks to Claude Code, Codex and OpenCode over ACP",
     "license": "MIT",
+    "author": "Maksim Zemskov <maxaz74@gmail.com>",
+    "keywords": [
+        "mcp",
+        "mcp-server",
+        "acp",
+        "agent-client-protocol",
+        "claude-code",
+        "codex",
+        "opencode",
+        "subagents",
+        "delegation"
+    ],
+    "homepage": "https://github.com/Nodge/throng-mcp#readme",
+    "bugs": {
+        "url": "https://github.com/Nodge/throng-mcp/issues"
+    },
     "repository": {
         "type": "git",
         "url": "git+https://github.com/Nodge/throng-mcp.git"
     },
-    "private": true,
     "type": "module",
+    "bin": {
+        "throng-mcp": "dist/mcp.js"
+    },
+    "files": [
+        "dist",
+        "skills",
+        "docs",
+        "README.md",
+        "LICENSE"
+    ],
     "engines": {
-        "node": ">=24"
+        "node": "^22.13 || >=24"
     },
     "packageManager": "pnpm@11.10.0",
     "scripts": {
         "start": "node src/mcp.ts",
+        "build": "tsdown",
+        "prepack": "pnpm run build",
         "typecheck": "tsc --noEmit",
         "test": "vitest --run",
         "test:watch": "vitest",
@@ -24,6 +51,7 @@
         "ci:fmt": "prettier --check .",
         "ci:typecheck": "tsc --noEmit",
         "ci:tests": "vitest --run",
+        "ci:build": "tsdown",
         "smoke": "node scripts/smoke/smoke.ts",
         "smoke:claude": "node scripts/smoke/smoke.ts claude/sonnet",
         "smoke:claude-schema": "node scripts/smoke/smoke.ts claude/sonnet --schema",
@@ -45,6 +73,7 @@
         "eslint": "^10.11.0",
         "lefthook": "^2.1.15",
         "prettier": "^3.9.9",
+        "tsdown": "^0.23.0",
         "typescript": "^6.0.3",
         "typescript-eslint": "^8.71.0",
         "vitest": "^5.0.3"

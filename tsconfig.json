@@ -11,7 +11,8 @@
         "allowImportingTsExtensions": true,
         "noEmit": true,
         "types": ["node"],
-        "skipLibCheck": true
+        "skipLibCheck": true,
+        "resolveJsonModule": true
     },
-    "include": ["src", "test", "scripts", "vitest.config.ts"]
+    "include": ["src", "test", "scripts", "vitest.config.ts", "tsdown.config.ts"]
 }

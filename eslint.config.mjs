@@ -5,7 +5,7 @@ import ts from 'typescript-eslint';
 
 export default ts.config(
     {
-        ignores: ['node_modules/**', 'coverage/**', '.claude/**', 'backlog/**'],
+        ignores: ['node_modules/**', 'coverage/**', 'dist/**', '.claude/**', 'backlog/**'],
     },
     js.configs.recommended,
     ...ts.configs.strictTypeChecked,

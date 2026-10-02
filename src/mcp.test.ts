@@ -6,13 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import {
     CallToolResultSchema,
     type ElicitRequest,
     type ElicitRequestFormParams,
-    ElicitRequestSchema,
     type ElicitResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import type {
@@ -23,10 +21,10 @@ import type {
     RunSuccess,
     TurnPending,
 } from './contract.ts';
+import { connectServer, fakeAgent, fakeClaudeConfig, payloadOf, serverEnv as cleanEnv } from '../test/mcp-server.ts';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'throng-mcp-'));
-const fakeAgent = fileURLToPath(new URL('../test/fake-agent/agent.ts', import.meta.url));
 
 // PATH for the server: only `node`, so list_harnesses never finds (and probes) a real adapter.
 const bin = join(dir, 'bin');
@@ -45,19 +43,14 @@ afterAll(() => {
     rmSync(dir, { recursive: true, force: true });
 });
 
-/** Parent env with THRONG_MCP_* stripped (the tests may run inside a throng session), cache and config redirected to the temp dir, PATH = `bin`, plus overrides. */
+/** Server env with cache and config redirected to the temp dir, PATH = `bin`, plus overrides. */
 function serverEnv(overrides: Record<string, string>): Record<string, string> {
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(process.env)) {
-        if (value !== undefined && !key.startsWith('THRONG_MCP_')) env[key] = value;
-    }
-    return {
-        ...env,
+    return cleanEnv({
         THRONG_MCP_CONFIG: join(dir, 'missing.yaml'),
         THRONG_MCP_CACHE_DIR: join(dir, 'cache'),
         PATH: bin,
         ...overrides,
-    };
+    });
 }
 
 /** Unique argv marker for a fake agent the server spawns, so the test can pgrep for leftovers. */
@@ -111,19 +104,7 @@ function isAlive(pid: number): boolean {
 
 /** Starts the real server over stdio, calls list_harnesses, closes the client and checks the server exited on stdin EOF. */
 async function callListHarnesses(env: Record<string, string>): Promise<{ tools: string[]; out: ListHarnessesOutput }> {
-    const transport = new StdioClientTransport({
-        command: process.execPath,
-        args: ['src/mcp.ts'],
-        cwd: repo,
-        env,
-        stderr: 'pipe',
-    });
-    let stderr = '';
-    transport.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
-    const client = new Client({ name: 'throng-test', version: '0' });
-    await client.connect(transport);
-    const pid = transport.pid;
-    if (!pid) expect.unreachable('server pid');
+    const { client, pid, stderr } = await connectServer({ entry: 'src/mcp.ts', cwd: repo, env });
     try {
         const { tools } = await client.listTools();
         const result = await client.callTool({ name: 'list_harnesses', arguments: {} });
@@ -139,7 +120,7 @@ async function callListHarnesses(env: Record<string, string>): Promise<{ tools: 
         // The client escalates to SIGTERM after 2 s; exiting well before that means the server handled stdin EOF itself.
         expect(Date.now() - started < 1500, `server took ${Date.now() - started} ms to exit`).toBe(true);
         expect(isAlive(pid), 'server process still alive').toBe(false);
-        expect(stderr).toMatch(/throng stopping why=stdin closed/);
+        expect(stderr()).toMatch(/throng stopping why=stdin closed/);
     }
 }
 
@@ -246,26 +227,14 @@ describe('mcp server over stdio', () => {
         const tmp = join(dir, 'tmp-sigterm');
         mkdirSync(tmp);
         const env = serverEnv({ THRONG_MCP_CONFIG: config, TMPDIR: tmp });
-        const transport = new StdioClientTransport({
-            command: process.execPath,
-            args: ['src/mcp.ts'],
-            cwd: repo,
-            env,
-            stderr: 'pipe',
-        });
-        let stderr = '';
-        transport.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
-        const client = new Client({ name: 'throng-test', version: '0' });
-        await client.connect(transport);
-        const pid = transport.pid;
-        if (!pid) expect.unreachable('server pid');
+        const { client, pid, stderr } = await connectServer({ entry: 'src/mcp.ts', cwd: repo, env });
         try {
             client.callTool({ name: 'list_harnesses', arguments: {} }).catch(() => undefined);
             await waitFor(() => tagAlive(tag), 5000, 'probed adapter never started');
             expect(readdirSync(tmp).length, 'probe scratch dir').toBe(1);
             process.kill(pid, 'SIGTERM');
             await waitFor(() => !isAlive(pid), 8000, 'server did not exit after SIGTERM');
-            expect(stderr).toMatch(/throng stopping why=SIGTERM/);
+            expect(stderr()).toMatch(/throng stopping why=SIGTERM/);
             expect(tagAlive(tag), 'probed adapter outlived the server').toBe(false);
             expect(readdirSync(tmp), 'probe scratch dir left behind').toStrictEqual([]);
         } finally {
@@ -308,40 +277,14 @@ describe('run_thronglet over stdio', () => {
         opts: { config?: string; onElicit?: (request: ElicitRequest) => ElicitResult } = {}
     ): Promise<{ client: Client; tag: string; pid: number; close: () => Promise<void> }> {
         const tag = newTag();
-        const config = writeConfig(
-            `run-${tag}.yaml`,
-            [
-                'harnesses:',
-                '  claude:',
-                `    command: ${JSON.stringify(process.execPath)}`,
-                `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
-                `    env: ${JSON.stringify({ FAKE_SCENARIO: scenario, ...agentEnv })}`,
-                opts.config ?? '',
-                '',
-            ].join('\n')
-        );
-        const transport = new StdioClientTransport({
-            command: process.execPath,
-            args: ['src/mcp.ts'],
+        const config = writeConfig(`run-${tag}.yaml`, fakeClaudeConfig(tag, scenario, agentEnv, opts.config));
+        const { client, pid, close } = await connectServer({
+            entry: 'src/mcp.ts',
             cwd: repo,
             env: serverEnv({ THRONG_MCP_CONFIG: config, THRONG_MCP_CACHE_DIR: cache }),
-            stderr: 'pipe',
+            ...(opts.onElicit ? { onElicit: opts.onElicit } : {}),
         });
-        const { onElicit } = opts;
-        const client = new Client(
-            { name: 'throng-test', version: '0' },
-            onElicit ? { capabilities: { elicitation: {} } } : {}
-        );
-        if (onElicit) client.setRequestHandler(ElicitRequestSchema, request => onElicit(request));
-        await client.connect(transport);
-        return { client, tag, pid: transport.pid ?? 0, close: () => client.close() };
-    }
-
-    function payloadOf(result: Record<string, unknown>): unknown {
-        const content = result.content as { type: string; text: string }[];
-        expect(content.length).toBe(1);
-        expect(content[0]?.type).toBe('text');
-        return JSON.parse(content[0]?.text ?? '');
+        return { client, tag, pid, close };
     }
 
     it('success: one JSON text block, isError undefined; model_rejected is a tool error', async () => {

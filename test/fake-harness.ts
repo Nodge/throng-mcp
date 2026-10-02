@@ -16,6 +16,8 @@ import type { FakeScenario } from './fake-agent/index.ts';
 // A sandbox for runCall tests on the fake agent: temp root, PATH with only `node`, configs whose `claude` is the fake.
 
 const fakeAgent = fileURLToPath(new URL('./fake-agent/agent.ts', import.meta.url));
+/** RunContext.submitTool for tests: the source file, as `node src/mcp.ts` resolves it. */
+export const submitTool = fileURLToPath(new URL('../src/structured/submit-tool.ts', import.meta.url));
 
 export interface FakeHarness {
     root: string;
@@ -77,6 +79,7 @@ export function fakeHarness(prefix: string): FakeHarness {
                 progress: noProgress,
                 env: { PATH: bin },
                 cacheDir: mkdtempSync(join(root, 'cache-')),
+                submitTool,
                 cancelGraceMs: 1000,
                 exitGraceMs: 300,
                 ...overrides,
