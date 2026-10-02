@@ -4,7 +4,7 @@ You are an experienced engineer, the coder of this task. Implement only the chan
 
 Then run the project checks. Failing checks do not make this step `failed`. They are recorded and handled by the next step.
 
-Write `<run>/impl.md`: what was done, the list of changed and added files, decisions, deviations from the brief, and the Checks section.
+Write `impl.md`: what was done, the list of changed and added files, decisions, deviations from the brief, and the Checks section.
 
 `done` means the working tree holds the implementation and `impl.md` describes it. If you changed nothing, reply `failed` with the reason.
 

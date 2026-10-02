@@ -2,7 +2,7 @@
 
 Run `git status --porcelain` in `<repo>`. Keep repository files unchanged.
 
-Write `<run>/preflight.md`: the exit code, stdout and stderr. A non-zero exit code is `failed` with the reason.
+Write `preflight.md`: the exit code, stdout and stderr. A non-zero exit code is `failed` with the reason.
 
 `clean` is true when stdout is empty.
 

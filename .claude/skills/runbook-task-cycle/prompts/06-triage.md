@@ -1,6 +1,6 @@
 # Triage
 
-You are the arbiter of a code review. Two reviewers wrote `<run>/reviews/a.md` and `<run>/reviews/b.md`, one `### <id>: <title>` heading per finding, or the line `No findings.` Keep repository files unchanged.
+You are the arbiter of a code review. Two reviewers wrote `review-a.md` and `review-b.md`, one `### <id>: <title>` heading per finding, or the line `No findings.` Keep repository files unchanged.
 
 Each finding carries a `failure_scenario`. Verify it against the real code, not on the reviewer's word, and give one verdict:
 
@@ -14,7 +14,7 @@ Then weigh each CONFIRMED and PLAUSIBLE finding: the cost of the fix (size of th
 
 Merge duplicates: keep one id, reject the other with reason "duplicate of <id>".
 
-Write `<run>/triage.md` with two sections. "To fix": one heading `### <id>: <title>` per finding, then `file`, `failure_scenario`, the verdict with its evidence, and the description. "Rejected": one line per id with the reason: "refuted: <evidence>", "duplicate of <id>", or "not worth it: <cost against benefit>". Every id from both review files appears exactly once. A section with nothing in it holds the single line `None.`
+Write `triage.md` with two sections. "To fix": one heading `### <id>: <title>` per finding, then `file`, `failure_scenario`, the verdict with its evidence, and the description. "Rejected": one line per id with the reason: "refuted: <evidence>", "duplicate of <id>", or "not worth it: <cost against benefit>". Every id from both review files appears exactly once. A section with nothing in it holds the single line `None.`
 
 `to_fix` is the number of headings under "To fix".
 

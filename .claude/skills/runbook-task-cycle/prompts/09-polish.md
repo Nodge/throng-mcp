@@ -8,7 +8,7 @@ Text: names, messages, documentation, test titles, anything a human reads. Make 
 
 Then run the project checks.
 
-Write `<run>/polish.md`: what you removed or reworded, file by file, one line each, and the Checks section.
+Write `polish.md`: what you removed or reworded, file by file, one line each, and the Checks section.
 
 `passed` is true only when every check that exists ran and exited 0.
 

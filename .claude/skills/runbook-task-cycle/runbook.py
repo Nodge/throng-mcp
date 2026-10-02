@@ -13,8 +13,13 @@ The orchestrator then talks to flow.py:
     flow.py --check                                validate the declarations
 
 A JSON argument may be `-` to read it from stdin, for text with quotes in it.
+
+Source: https://github.com/Nodge/skills/tree/main/skills/agent-runbook-authoring
+Each release is tagged agent-runbook-authoring/v<__version__>. Changes to the flow.py API: CHANGELOG.md there.
 """
 from __future__ import annotations
+
+__version__ = '1.0.0'
 
 import json
 import os
@@ -42,6 +47,10 @@ class Parallel:
     """A target that launches several steps at once."""
 
     steps: tuple[str, ...]
+
+
+# How a failed or blocked step without on_failure, or a failed join, ends the run.
+FAILED_END = End('failed', 'read <run>/progress.md')
 
 
 def end(status: str, report: str = '') -> End:
@@ -99,9 +108,6 @@ class HumanStep:
     writes: str | None = None
     after: list[str] = field(default_factory=list)
 
-    def question_for(self, run_dir: str) -> str:
-        return self.question.replace('<run>', run_dir)
-
     def match(self, answer: str) -> str | None:
         """The declared choice this answer names, or the answer itself when the step takes free text."""
         if not self.choices:
@@ -113,6 +119,13 @@ class HumanStep:
 
 
 AnyStep: TypeAlias = 'Step | HumanStep'
+WORKING_TREE = 'working tree'
+
+
+def _writes(step: AnyStep) -> list[str]:
+    if isinstance(step, HumanStep):
+        return [step.writes] if step.writes else []
+    return step.writes
 
 
 class State:
@@ -235,6 +248,41 @@ class RunState:
         return section
 
 
+class RunFiles:
+    """Step outputs in a run directory: a section writes <run>/<NN>-<name>, NN being its place among the sections."""
+
+    def __init__(self, steps: dict[str, AnyStep], run_dir: str, state: RunState) -> None:
+        self.run_dir = run_dir
+        self.state = state
+        self._writers: dict[str, set[str]] = {}
+        for step in steps.values():
+            for name in _writes(step):
+                self._writers.setdefault(name, set()).add(step.name)
+
+    def path(self, section: Section, name: str) -> str:
+        return os.path.join(self.run_dir, f'{self.state.sections.index(section):02d}-{name}')
+
+    def is_output(self, name: str) -> bool:
+        return name in self._writers
+
+    def latest(self, name: str, before: Section | None = None) -> str | None:
+        """The file a done section last wrote under this name, among the sections before `before`."""
+        end = self.state.sections.index(before) if before is not None else len(self.state.sections)
+        found = None
+        for i, section in enumerate(self.state.sections[:end]):
+            if section.status is Status.DONE and section.name in self._writers.get(name, ()):
+                found = os.path.join(self.run_dir, f'{i:02d}-{name}')
+        return found
+
+    def substitute(self, text: str) -> str:
+        """<run>/<output name> becomes the latest file of that name; any other <run> the run directory."""
+        for name in self._writers:
+            latest = self.latest(name)
+            if latest:
+                text = text.replace(f'<run>/{name}', latest)
+        return text.replace('<run>', self.run_dir)
+
+
 class ProgressLog:
     """<run>/progress.md: the inputs, then one line per event. Append-only."""
 
@@ -301,6 +349,11 @@ class Replay:
 
     def run(self) -> Plan:
         self._visit(self._start)
+        if self._plan.ending:
+            # A branch cut off by the ending may still have an executor at work: the run ends once it reports.
+            seen = {s.id for s in self._plan.waiting}
+            self._plan.waiting += [s for s in self._state.sections
+                                   if s.status is Status.RUNNING and not s.superseded and s.id not in seen]
         return self._plan
 
     def _visit(self, name: str) -> None:
@@ -343,7 +396,7 @@ class Replay:
                 return False
             if latest.status is not Status.DONE:
                 why = f'step {latest.id} {latest.status.value} before the join at {step.name}'
-                self._plan.ending = Ending(End('failed'), why)
+                self._plan.ending = Ending(FAILED_END, why)
                 return False
         self._pending_joins.discard(step.name)
         return True
@@ -360,7 +413,7 @@ class Replay:
             why = f'step {section.id} {section.status.value}'
             if section.reason:
                 why += f': {section.reason}'
-            self._plan.ending = Ending(End('failed'), why)
+            self._plan.ending = Ending(FAILED_END, why)
             return
         self._go(target, f'after step {section.id}')
 
@@ -408,7 +461,7 @@ TEXT = {
     'side_effect_failure': 'ask the human: step {label} has side effects and ended {status}{reason}. '
                            'On yes: {relaunch}. On no: {log} and stop.',
     'still_running': 'still running: {labels}',
-    'idle': 'nothing is pending and the run has not ended: read state.json and decide.',
+    'idle': 'nothing is pending and the run has not ended. Report that to the human with the run directory, and stop.',
     'wait_for_end': 'wait: {labels}. The run ends {status} once they are recorded.',
     'ended': 'end: {status} ({why}). The run is over. Report to the human: status {status}, run directory {run}{report}.',
     'reason': ' ({reason})',
@@ -424,6 +477,9 @@ TEXT = {
     'message_repo': 'repo: {repo}',
     'message_run': 'run: {run}',
     'message_input': '{key}: {value}',
+    'message_write': 'write {name}: {path}',
+    'message_file': 'read {name}: {path}',
+    'absent': 'absent, no earlier step wrote it',
     'message_partial': 'The tree may hold a partial earlier attempt.',
     'message_close': '--- end of message ---',
     'missing_repo': '<repo: not among the inputs>',
@@ -438,6 +494,7 @@ class Renderer:
         self.rb = rb
         self.run_dir = run_dir
         self.state = state
+        self.files = RunFiles(rb.steps, run_dir, state)
 
     def _command(self, *args: str) -> str:
         return ' '.join((self.rb.cmd, self.run_dir) + args)
@@ -447,7 +504,7 @@ class Renderer:
         return [TEXT['wait_for_end'].format(labels=labels, status=ending.end.status)]
 
     def ended(self, ending: Ending) -> list[str]:
-        report = ending.end.report.replace('<run>', self.run_dir)
+        report = self.files.substitute(ending.end.report)
         return [TEXT['ended'].format(status=ending.end.status, why=ending.why, run=self.run_dir,
                                      report=TEXT['report'].format(report=report) if report else '')]
 
@@ -486,7 +543,7 @@ class Renderer:
         return self._command('answer', section.id, arg)
 
     def _ask(self, step: HumanStep, section: Section) -> list[str]:
-        lines = [TEXT['ask'].format(label=section.label(), question=step.question_for(self.run_dir))]
+        lines = [TEXT['ask'].format(label=section.label(), question=self.files.substitute(step.question))]
         if step.choices:
             lines.append(TEXT['ask_choices'].format(choices=' | '.join(step.choices)))
         else:
@@ -501,11 +558,11 @@ class Renderer:
                                          spec=self.rb.executor_specs.get(executor, TEXT['missing_executor']))
         if step.side_effects:
             headline += TEXT['launch_side_effects'].format(side_effects=step.side_effects)
-        lines = [headline, TEXT['message_open']] + self._message(step, inputs) + [TEXT['message_close']]
+        lines = [headline, TEXT['message_open']] + self._message(step, section, inputs) + [TEXT['message_close']]
         lines.append(TEXT['when_finishes'].format(command=self._command('reply', section.id, TEXT['reply_arg'])))
         return lines
 
-    def _message(self, step: Step, inputs: dict[str, Any]) -> list[str]:
+    def _message(self, step: Step, section: Section, inputs: dict[str, Any]) -> list[str]:
         lines = [TEXT['message_read'].format(common=os.path.join(self.rb.here, 'prompts', 'common.md'),
                                              prompt=os.path.join(self.rb.here, step.prompt)),
                  TEXT['message_repo'].format(repo=inputs.get('repo', TEXT['missing_repo'])),
@@ -516,6 +573,14 @@ class Renderer:
             else:
                 key, value = item, inputs.get(item, TEXT['missing_input'])
             lines.append(TEXT['message_input'].format(key=key, value=value))
+        for name in step.writes:
+            lines.append(TEXT['message_write'].format(name=name, path=self.files.path(section, name)))
+        for name in step.reads:
+            if name == WORKING_TREE:
+                continue
+            path = self.files.latest(name, before=section) if self.files.is_output(name) \
+                else os.path.join(self.run_dir, name)
+            lines.append(TEXT['message_file'].format(name=name, path=path or TEXT['absent']))
         if any(s.name == step.name and s.superseded for s in self.state.sections):
             lines.append(TEXT['message_partial'])
         return lines
@@ -605,7 +670,10 @@ class Runbook:
         on_failure: the same, called for failed and blocked replies. Without it they end the run as failed.
         inputs: names taken from the run's inputs, or (key, value) pairs passed as they are.
         reply: {field: type} the executor's JSON carries beyond status, for the reader of flow.py.
-        reads, writes: paths under <run>, for the reader of flow.py.
+        writes: names of the files the step writes. Each launch writes <run>/<NN>-<name>, NN being its section's
+        place in the run, and the launch message gives the path.
+        reads: names of the files the step reads: another step's output, given as the latest such file or as
+        absent; an input file under <run>, given as it is; or 'working tree', which is not passed.
         after: steps whose latest sections must be done before this one launches.
         side_effects: what the step does outside the tree; such a step is never relaunched without the human.
         skip: a function (s) -> target or None, called once `after` is satisfied. A target is followed instead
@@ -622,7 +690,7 @@ class Runbook:
         choices: the strings next() compares against; the orchestrator maps the answer to one of them. Without
         choices the step takes free text and next() gets it whole.
         next: a function (choice, s) -> step, parallel(...) or end(...).
-        writes: a file under <run> the engine writes the human's verbatim words to, for the steps that follow.
+        writes: a file name the engine writes the human's verbatim words to, numbered like a step's output.
         """
         self.steps[name] = HumanStep(name=name, question=question, choices=list(choices), next=next,
                                      writes=writes, after=list(after))
@@ -703,6 +771,11 @@ class Runbook:
         if section.status is not Status.RUNNING:
             die(f'section {sid} is {section.status.value}, not running')
         reply = _parse_reply(raw)
+        step = self.steps.get(section.name)
+        if reply['status'] == Status.DONE.value and isinstance(step, Step):
+            problem = _reply_problem(reply, step.reply)
+            if problem:
+                reply = {'status': Status.FAILED.value, 'reason': f'invalid reply: {problem}'}
         section.reply, section.status = reply, Status(reply['status'])
         ProgressLog(run_dir).append(f'{sid}: {json.dumps(reply, ensure_ascii=False)}')
         return state
@@ -720,7 +793,7 @@ class Runbook:
             die('answer must be one of: ' + ' | '.join(step.choices))
         section.note, section.answer, section.status = choice, words, Status.DONE
         if step.writes:
-            with open(os.path.join(run_dir, step.writes), 'w', encoding='utf-8') as f:
+            with open(RunFiles(self.steps, run_dir, state).path(section, step.writes), 'w', encoding='utf-8') as f:
                 f.write(words.rstrip('\n') + '\n')
         log = ProgressLog(run_dir)
         log.append(f'{sid}: answered: {choice}')
@@ -775,7 +848,7 @@ class Runbook:
         log = ProgressLog(run_dir)
         if isinstance(step, HumanStep):
             section = state.new_section(name, Status.WAITING_FOR_HUMAN)
-            log.append(f'{section.label()}: asked: {step.question_for(run_dir)}')
+            log.append(f'{section.label()}: asked: {RunFiles(self.steps, run_dir, state).substitute(step.question)}')
         else:
             section = state.new_section(name, Status.RUNNING)
             log.append(f'{section.label()}: launched')
@@ -818,6 +891,16 @@ def _parse_reply(raw: str) -> dict[str, Any]:
     if not isinstance(reply, dict) or reply.get('status') not in REPLY_STATUSES:
         return dict(INVALID_REPLY)
     return reply
+
+
+def _reply_problem(reply: dict[str, Any], fields: dict[str, type]) -> str | None:
+    """What is wrong with a done reply against the step's declared reply fields, if anything."""
+    for name, typ in fields.items():
+        if name not in reply:
+            return f'no field {name!r}'
+        if not _is_of_type(reply[name], typ):
+            return f'field {name!r} must be {typ.__name__}, got {json.dumps(reply[name])}'
+    return None
 
 
 COMMANDS: dict[str, Command] = {

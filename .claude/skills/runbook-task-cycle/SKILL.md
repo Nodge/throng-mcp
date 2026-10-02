@@ -28,7 +28,7 @@ The checks are green before a run. The runbook does not fix what was red already
 You are the orchestrator of this run. Orchestrating takes a session that can launch subagents and learn when they finish. If yours cannot, stop and say so. During the run you do only these things:
 
 - run `python3 <skill>/flow.py …` as written below
-- create the run directory and the input files the Inputs section tells you to save
+- save the input files the Inputs section names into the run directory `start` created
 - launch steps as subagents, with the message `flow.py` prints
 - read a step's output file only to quote it to the human
 - ask the human, and report the end of the run
@@ -37,13 +37,13 @@ Nothing else. No other command, no reading of `flow.py`, `state.json`, `progress
 
 Starting
 
-- The run directory is `.agent-runbooks/runs/<YYYYMMDD>-<slug>` under the directory your session started in, with today's local date. Run `python3 <skill>/flow.py <run> start '<the inputs you were given, as one JSON object>'` first: it creates the directory, or refuses because it exists, in which case add `-2`, `-3` to the name and start again. Then save the input files the Inputs section names into the directory it created.
+- The run directory is `.agent-runbooks/runs/<YYYYMMDD>-<slug>` under the directory your session started in, with today's local date. Run `python3 <skill>/flow.py <run> start '<the inputs you were given, as one JSON object>'` first, with every input the Inputs section saves to a file given as that file name: it creates the directory, or refuses because it exists, in which case add `-2`, `-3` to the name and start again. Then save the input files the Inputs section names into the directory it created.
 - Resume: `python3 <skill>/flow.py <run>`.
 
 flow.py
 
 - It keeps the state of the run and prints what to do: which steps to launch, with which executor and what message, whom to wait for, what to ask the human, or that the run has ended. Do all of what it prints, then wait. Every command it asks you to run next is printed in full.
-- A step's message arrives: take the last JSON object in it and run the `reply` command printed for that step with that JSON. No JSON object in the message: pass `{"status": "failed", "reason": "invalid reply"}`. Any JSON argument, for `start` or `reply`, with a quote in it goes through stdin: put `-` in place of the JSON and pipe it.
+- A step's message arrives: take the last JSON object in it and run the `reply` command printed for that step with that JSON. No JSON object in the message: pass `{"status": "failed", "reason": "invalid reply"}`. Any JSON argument, for `start` or `reply`, with a single quote (`'`) in it goes through stdin: put `-` in place of the JSON and pipe it in with a quoted heredoc.
 - The human answers a question: map the answer to one of the choices `flow.py` listed, ask again if none fits, and run the `answer` command printed with that choice and the human's words verbatim. A free-text question takes the words alone. `flow.py` keeps the words and writes them where the steps that follow read them.
 - A running step's executor is gone, because the session is new or the tool reports it dead: `flow.py <run> interrupted <section>`. Executors you launched in this conversation are not gone: wait for them.
 - You departed from these rules, or did something `flow.py` does not know about: `flow.py <run> log '<one line>'`.
@@ -73,9 +73,9 @@ Declared in `flow.py` next to this file: inputs, executors, steps with their pro
 
 ## End of run
 
-- `ready`: both reviewers found nothing, so triage was skipped, or triage marked nothing to fix, or every finding to fix is resolved with evidence; the checks are green and the polish pass is done. The maintainer reads `polish.md`, then `verify.md` if it exists, else `triage.md` if it exists. Findings not worth fixing are under "Rejected" in `triage.md` with reason "not worth it". Then the backlog notes and finalization, and one commit to main with the task id.
+- `ready`: both reviewers found nothing, so triage was skipped, or triage marked nothing to fix, or every finding to fix is resolved with evidence; the checks are green and the polish pass is done. The maintainer reads the polish file `flow.py` names, then the last `verify.md` if there is one, else `triage.md` if there is one. Step outputs in the run directory carry their launch number: `05-triage.md`, `08-verify.md`. Findings not worth fixing are under "Rejected" in `triage.md` with reason "not worth it". Then the backlog notes and finalization, and one commit to main with the task id.
 - `needs_attention`: findings to fix remain unresolved or the checks still fail. `verify.md` says which, or `polish.md` if the polish pass left them red. The maintainer decides.
-- `failed`: a step failed or was blocked, or the maintainer stopped at ask-dirty. `progress.md` says which step and why.
+- `failed`: a step failed or was blocked, the checks stayed red after one fix attempt, or the maintainer stopped at ask-dirty. The file `flow.py` names at the end says why.
 
-Report the status, the run directory and the one file to read next.
+Report the status, the run directory and the file `flow.py` names.
 

@@ -30,25 +30,25 @@ rb.step('fix-checks', executor=coder, prompt='prompts/03-fix-checks.md',        
 
 for letter, executor in (('a', 'claude'), ('b', 'gpt')):
     rb.step(f'review-{letter}', executor=executor, prompt='prompts/04-review.md',
-            inputs=[('review-file', f'reviews/{letter}.md'), ('id-prefix', letter)],
-            reads=['brief.md', 'impl.md', 'fix-checks.md (if present)', 'working tree'], writes=[f'reviews/{letter}.md'],
+            inputs=[('id-prefix', letter)],
+            reads=['brief.md', 'impl.md', 'fix-checks.md', 'working tree'], writes=[f'review-{letter}.md'],
             reply={'findings': int},
             next='triage')
 
 rb.step('triage', executor='fable', prompt='prompts/06-triage.md', after=('review-a', 'review-b'),
-        reads=['brief.md', 'reviews/a.md', 'reviews/b.md', 'working tree'], writes=['triage.md'], reply={'to_fix': int},
+        reads=['brief.md', 'review-a.md', 'review-b.md', 'working tree'], writes=['triage.md'], reply={'to_fix': int},
         skip=lambda s: 'polish' if all(getattr(s.reply(f'review-{x}'), 'findings', None) == 0 for x in 'ab') else None,
         next=lambda r, s: 'polish' if r.to_fix == 0 else 'fix')
 
-rb.step('fix', executor=coder, prompt='prompts/07-fix.md',         reads=['brief.md', 'triage.md', 'verify.md (if present)', 'rounds.md (if present)', 'working tree'], writes=['fix.md'],
+rb.step('fix', executor=coder, prompt='prompts/07-fix.md',         reads=['brief.md', 'triage.md', 'verify.md', 'rounds.md', 'working tree'], writes=['fix.md'],
         next='verify')
 
-rb.step('verify', executor='claude', prompt='prompts/08-verify.md',         reads=['triage.md', 'fix.md', 'verify.md (if present)', 'working tree'], writes=['verify.md'],
+rb.step('verify', executor='claude', prompt='prompts/08-verify.md',         reads=['triage.md', 'fix.md', 'verify.md', 'working tree'], writes=['verify.md'],
         reply={'unresolved': int, 'passed': bool},
         next=lambda r, s: 'polish' if r.unresolved == 0 and r.passed
         else ('fix' if s.done('verify') < s.inputs.maxFixRounds else 'ask-rounds'))
 
-rb.step('polish', executor=coder, prompt='prompts/09-polish.md',         reads=['brief.md', 'triage.md (if present)', 'verify.md (if present)', 'working tree'], writes=['polish.md'],
+rb.step('polish', executor=coder, prompt='prompts/09-polish.md',         reads=['brief.md', 'working tree'], writes=['polish.md'],
         reply={'passed': bool},
         next=lambda r, s: end('ready', 'read <run>/polish.md') if r.passed else end('needs_attention', 'read <run>/polish.md'))
 
