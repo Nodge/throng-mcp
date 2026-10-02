@@ -5,3 +5,6 @@ coverage/
 *.log
 # Worktrees for parallel tasks: full checkouts of the repo inside itself.
 .claude/worktrees/
+
+# Runbook run directories
+.agent-runbooks/

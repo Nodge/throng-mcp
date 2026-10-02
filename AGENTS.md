@@ -10,30 +10,30 @@ Project: MCP server `throng` that runs coding harnesses (Claude Code, Codex, Ope
 
 ## Task cycle
 
-Every code task goes through the `task-cycle` workflow (`.claude/workflows/task-cycle.js`). The main session drives the backlog lifecycle around it (`backlog instructions task-execution` / `task-finalization`):
+Every code task goes through the `runbook-task-cycle` skill (`.claude/skills/runbook-task-cycle/`): the main session is the orchestrator, `flow.py` keeps the state of the run and prints which step to launch next. The main session drives the backlog lifecycle around it (`backlog instructions task-execution` / `task-finalization`):
 
 1. `backlog task view THRONG-n --plain`, then `backlog task edit THRONG-n -s "In Progress" -a @<you>`.
 2. The main session researches and writes a self-contained brief: specific DESIGN.md sections, contracts, the task's acceptance criteria, what not to touch. The brief is the plan of record: `backlog task edit THRONG-n --plan "<brief>"`.
-3. `Workflow({name: 'task-cycle', args: {taskId: 'THRONG-n', brief, gateCmd?, repo?}})` — implementation by an Opus coder, independent gates, dual review (Opus + Codex), triage, fixes by the Opus coder verified by a separate Opus.
-4. The main session reads the report and spot-checks `review.fixed[].evidence` against the code. Report summary, deviations and deferred minor findings go to `--append-notes`.
+3. Load the skill and run it with inputs `taskId`, `brief`, `repo` (the project directory, or a worktree), optionally `coder` and `maxFixRounds` — implementation by an Opus coder, project checks, dual review (Opus + Codex), triage by the main session, fixes by the coder verified by a separate Opus, a polish pass. The run lives in `.agent-runbooks/runs/<date>-<task>/` (gitignored) and ends `ready`, `needs_attention` or `failed`, naming the file to read.
+4. The main session reads that file (`polish.md`, then `verify.md` or `triage.md`) and spot-checks the "Resolved" evidence against the code. Report summary, deviations and deferred minor findings go to `--append-notes`.
 5. Finalization: check acceptance criteria and DoD items only against evidence (tests, command output), `--final-summary`, status `Done`.
 6. One commit to main with the code and the `backlog/` changes, task ID in the message (`THRONG-1: skeleton`).
 
 Subagents (coder, reviewers, verifier) don't touch `backlog/`: everything they need is in the brief.
 
-Statuses: `To Do / In Progress / Review / Blocked / Done`. `Review` = the code is ready and waits on a check outside the workflow (e.g. the maintainer's smoke run); `Blocked` = waits on something external, reason in notes.
+Statuses: `To Do / In Progress / Review / Blocked / Done`. `Review` = the code is ready and waits on a check outside the run (e.g. the maintainer's smoke run); `Blocked` = waits on something external, reason in notes.
 
-v1 tasks are sequential. Tasks without mutual dependencies (v2: THRONG-6, THRONG-7, THRONG-8) may run in parallel, each in its own worktree under `.claude/worktrees/<name>`, passed as `args.repo`.
+v1 tasks are sequential. Tasks without mutual dependencies (v2: THRONG-6, THRONG-7, THRONG-8) may run in parallel, each in its own worktree under `.claude/worktrees/<name>`, passed as `repo`.
 
-The Codex/GPT coder variant is the same workflow with `args.coder: 'codex'`. Run it **only** when the maintainer asks explicitly ("on codex"); never picked on its own. Everything else stays the same: gates, dual review, triage, Opus verification of fixes.
+The Codex/GPT coder variant is the same runbook with `coder: codex`. Run it **only** when the maintainer asks explicitly ("on codex"); never picked on its own. Everything else stays the same: checks, dual review, triage, Opus verification of fixes.
 
 Work found outside a task's acceptance criteria is not added silently: describe it to the maintainer and create a task only after approval.
 
 ## Roles
 
 - **Fable (main session)**: backlog lifecycle, briefs, review triage, contracts (tool input/output and `ErrorCode` from DESIGN §3, `HarnessDefinition`, the Worker interface) — edits them itself, doesn't delegate; architecture decisions; spikes against real adapters; commits.
-- **Opus (subagents)**: all other code — implementation and post-review fixes via the workflow; as separate agents, one of the two independent reviews and fix verification.
-- **Codex (thronglets via the throng MCP server, `codex/gpt-6-sol:high`)**: the second independent review — another model's view of the code; writes code only in the `coder: 'codex'` variant, on the maintainer's explicit request.
+- **Opus (subagents)**: all other code — implementation and post-review fixes via the runbook; as separate agents, one of the two independent reviews and fix verification.
+- **Codex (thronglets via the throng MCP server, `codex/gpt-6.1-sol:high`)**: the second independent review — another model's view of the code; writes code only in the `coder: 'codex'` variant, on the maintainer's explicit request.
 - **Maintainer (human)**: smoke matrix on real harnesses (DESIGN §9; spends tokens), dogfood at the end of the stage, approves new tasks.
 
 ## Code rules

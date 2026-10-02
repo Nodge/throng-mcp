@@ -13,4 +13,4 @@ bypass_git_hooks: false
 check_active_branches: true
 active_branch_days: 30
 task_prefix: "throng"
-definition_of_done: ["Went through the task-cycle workflow; report spot-checked", "Gates green: pnpm typecheck && pnpm test", "DESIGN.md updated if an external contract (DESIGN §3) changed"]
+definition_of_done: ["Went through the runbook-task-cycle; report spot-checked", "Gates green: pnpm typecheck && pnpm test", "DESIGN.md updated if an external contract (DESIGN §3) changed"]
