@@ -5,6 +5,7 @@ status: To Do
 assignee:
   - '@nodge'
 created_date: '2026-10-02 19:56'
+updated_date: '2026-10-02 20:47'
 labels: []
 milestone: m-2
 dependencies:
@@ -34,3 +35,9 @@ Maintainer-only steps, spend real credentials. npm trusted publishing (OIDC) is 
 - [ ] #2 Gates green: pnpm typecheck && pnpm test
 - [ ] #3 DESIGN.md updated if an external contract (DESIGN §3) changed
 <!-- DOD:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Order matters (THRONG-17 review a1): changesets/action publishes any unpublished version even with no changesets, so until throng-mcp@0.1.0 is on npm every Release run on main is red at changeset publish (nothing published or tagged). Publish 0.1.0 by hand from the local THRONG-17 commit before pushing main, or right after the push; then configure the trusted publisher (npmjs.com package settings: GitHub Nodge/throng-mcp, workflow release.yml, environment none). pnpm pack --dry-run first; the pack test already checks the tarball contents.
+<!-- SECTION:NOTES:END -->

@@ -1,0 +1,36 @@
+name: Release
+
+on:
+    push:
+        branches: [main]
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+    release:
+        name: Release
+        # prevents this action from running on forks
+        if: github.repository == 'Nodge/throng-mcp'
+        permissions:
+            contents: write # to create release
+            issues: write # to post issue comments
+            pull-requests: write # to create pull request
+            id-token: write # to mint the OIDC token npm exchanges for publish rights
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: pnpm/action-setup@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 24.x
+                  cache: pnpm
+            - name: Install deps
+              run: pnpm install --frozen-lockfile
+            - name: Create Release Pull Request or Publish to npm
+              id: changesets
+              uses: changesets/action@v2
+              with:
+                  pr-title: 'Upcoming Release'
+                  commit-message: 'chore(release): version bump'
+                  publish-script: pnpm run ci:publish
+                  version-script: pnpm run ci:version

@@ -17,9 +17,9 @@ Every code task goes through the `runbook-task-cycle` skill (`.claude/skills/run
 3. Load the skill and run it with inputs `taskId`, `brief`, `repo` (the project directory, or a worktree), optionally `coder` and `maxFixRounds` — implementation by an Opus coder, project checks, dual review (Opus + Codex) with a failure scenario per finding, triage as a step on Fable, fixes by the coder verified by a separate Opus, a polish pass. The run lives in `.agent-runbooks/runs/<date>-<task>/` (gitignored) and ends `ready`, `needs_attention` or `failed`, naming the file to read.
 4. The main session reads that file (`polish.md`, then `verify.md` or `triage.md`) and spot-checks the "Resolved" evidence against the code. Report summary, deviations and findings rejected as not worth it go to `--append-notes`.
 5. Finalization: check acceptance criteria and DoD items only against evidence (tests, command output), `--final-summary`, status `Done`.
-6. One commit to main with the code and the `backlog/` changes, task ID in the message (`THRONG-1: skeleton`).
+6. One commit to main with the code and the `backlog/` changes, task ID in the message (`THRONG-1: skeleton`). A commit touching `src/` (tests aside), `data/` or `package.json` carries a changeset, written by the main session at finalization (`pnpm changeset`): patch for fixes; minor for new tools, options, harnesses or behaviour; major for a change of the DESIGN §3 contracts. In `package.json` only `dependencies`, `engines`, `bin`, `files` or `exports` count; `devDependencies` and `scripts` alone need none (on a PR branch `pnpm changeset --empty` satisfies `ci:changesets`). Pure docs, tests, backlog and CI commits need none.
 
-Subagents (coder, reviewers, verifier) don't touch `backlog/`: everything they need is in the brief.
+Subagents (coder, reviewers, verifier) don't touch `backlog/` or `.changeset/`: everything they need is in the brief.
 
 Statuses: `To Do / In Progress / Review / Blocked / Done`. `Review` = the code is ready and waits on a check outside the run (e.g. the maintainer's smoke run); `Blocked` = waits on something external, reason in notes.
 
@@ -46,6 +46,10 @@ Work found outside a task's acceptance criteria is not added silently: describe 
 ## End of stage
 
 All milestone tasks `Done` (the maintainer's smoke list is part of their acceptance criteria) + dogfood (the maintainer calls `run_thronglet` from real sessions) + `backlog milestone archive <name>`. Dogfood is the only point where the process stops and waits for a human. Work past v2 (DESIGN §11) is decomposed into tasks when v2 closes, not before.
+
+## Releases
+
+Changesets accumulate on main. The Release workflow (`.github/workflows/release.yml`) keeps an "Upcoming Release" PR with the version bump and `CHANGELOG.md`; the maintainer merges it and the workflow publishes to npm. The first version goes by hand (THRONG-18). Details: [docs/development.md](docs/development.md#release).
 
 ## Decisions
 

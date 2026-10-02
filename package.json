@@ -52,6 +52,10 @@
         "ci:typecheck": "tsc --noEmit",
         "ci:tests": "vitest --run",
         "ci:build": "tsdown",
+        "changeset": "changeset add",
+        "ci:changesets": "changeset status --since=origin/main",
+        "ci:version": "changeset version",
+        "ci:publish": "pnpm run ci:build && changeset publish",
         "smoke": "node scripts/smoke/smoke.ts",
         "smoke:claude": "node scripts/smoke/smoke.ts claude/sonnet",
         "smoke:claude-schema": "node scripts/smoke/smoke.ts claude/sonnet --schema",
@@ -68,6 +72,8 @@
         "zod": "^4.6.5"
     },
     "devDependencies": {
+        "@changesets/changelog-github": "^1.0.1",
+        "@changesets/cli": "^3.0.3",
         "@eslint/js": "^10.0.1",
         "@types/node": "^24.19.0",
         "eslint": "^10.11.0",

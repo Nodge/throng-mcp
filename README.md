@@ -24,15 +24,16 @@ Three parts, in order: the server, the agents it may run, and the client it is c
 
 ### 1. The server
 
-Needs node ≥ 24 and pnpm. Tested with node 24.11.1, pnpm 11.10, claude 2.1.282, codex 0.156.1, opencode 1.18.30.
+The npm package [`throng-mcp`](https://www.npmjs.com/package/throng-mcp). Needs node `^22.13 || >=24`. Tested with node 24.11.1, claude 2.1.282, codex 0.156.1, opencode 1.18.30.
 
-```bash
-git clone https://github.com/Nodge/throng-mcp
-cd throng-mcp
-pnpm install
-```
+Two ways to run it:
 
-There is no build step: the server is `node src/mcp.ts`, run from this checkout. Keep the clone where it is.
+- `npx -y throng-mcp` straight in the client config, below. Nothing to install: npx fetches the package on the first start and caches it.
+- A global install, then the command is `throng-mcp`. Starts faster than going through npx.
+
+  ```bash
+  npm i -g throng-mcp
+  ```
 
 ### 2. The agents to run
 
@@ -77,13 +78,13 @@ Custom providers live in your `~/.config/opencode/opencode.json`; throng doesn't
 
 ### 3. The MCP client
 
-The client is the session that calls throng. It may be the same program as one of the agents above, or a different one. The server speaks stdio and the command is `node <clone>/src/mcp.ts`; the commands below assume you are in the clone directory.
+The client is the session that calls throng. It may be the same program as one of the agents above, or a different one. The server speaks stdio and the command is `npx -y throng-mcp`, or `throng-mcp` after a global install.
 
 <details>
 <summary><strong>Claude Code</strong></summary>
 
 ```bash
-claude mcp add --scope user throng -- node "$(pwd)/src/mcp.ts"
+claude mcp add --scope user throng -- npx -y throng-mcp
 ```
 
 `--scope user` registers it for every project; without it, for the current project only. `claude mcp list` shows the result.
@@ -94,7 +95,7 @@ claude mcp add --scope user throng -- node "$(pwd)/src/mcp.ts"
 <summary><strong>Codex</strong></summary>
 
 ```bash
-codex mcp add throng -- node "$(pwd)/src/mcp.ts"
+codex mcp add throng -- npx -y throng-mcp
 ```
 
 </details>
@@ -109,7 +110,7 @@ In `~/.config/opencode/opencode.json`:
   "mcp": {
     "throng": {
       "type": "local",
-      "command": ["node", "/absolute/path/to/throng-mcp/src/mcp.ts"],
+      "command": ["npx", "-y", "throng-mcp"],
       "enabled": true
     }
   }
@@ -138,7 +139,7 @@ npx skills add Nodge/throng-mcp --skill throng -g -a claude-code -y
 <details>
 <summary><strong>By hand</strong></summary>
 
-Copy `skills/throng` into your agent's skills directory: `~/.claude/skills`, `~/.codex/skills`, `~/.config/opencode/skills`.
+Copy `skills/throng` into your agent's skills directory: `~/.claude/skills`, `~/.codex/skills`, `~/.config/opencode/skills`. A global install also leaves it under the installed package, `$(npm root -g)/throng-mcp/skills/throng`.
 
 </details>
 

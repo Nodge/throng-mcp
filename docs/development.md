@@ -2,6 +2,14 @@
 
 For maintainers. Users start with [README.md](../README.md); the design and the exact tool contracts are in [DESIGN.md](DESIGN.md), the process (backlog, task cycle, roles) in [AGENTS.md](../AGENTS.md).
 
+## Running from the checkout
+
+To run your working copy instead of the npm package: `pnpm install`, then `pnpm start` (`node src/mcp.ts`, Node >= 22.18 or 24, no build). Register it in place of the package:
+
+```bash
+claude mcp add --scope user throng -- node /abs/path/to/throng-mcp/src/mcp.ts
+```
+
 ## Development
 
 - Gates: `pnpm typecheck && pnpm lint && pnpm test`. The pre-commit hook (lefthook, installed by `pnpm install`) formats with prettier, runs `eslint --fix` and typecheck.
@@ -14,6 +22,14 @@ For maintainers. Users start with [README.md](../README.md); the design and the 
 - The version from `package.json` and `data/registry.json` are JSON imports, inlined at build time: a registry update needs a rebuild, and `data/` is not in the package.
 - `src/mcp.ts` resolves the submit tool's path from its own location (`.ts` next to the sources, `.js` in `dist/`) and passes it down as `RunContext.submitTool`.
 - The tarball holds `dist/`, `skills/`, `docs/`, `README.md`, `LICENSE` and `package.json`. `pnpm pack --dry-run` lists it; `scripts/pack.test.ts` (in `pnpm test`) packs it into a temp dir, checks that list, and runs `node dist/mcp.js` from the unpacked package against the fake agent: `list_harnesses` and a `run_thronglet` with a `schema`.
+
+## Release
+
+- A task commit touching `src/` (tests aside), `data/` or the published fields of `package.json` carries a changeset, `pnpm changeset`; the rule and the bump levels are in [AGENTS.md](../AGENTS.md#task-cycle). Config: `.changeset/config.json`.
+- `ci:changesets` (`changeset status --since=origin/main`) runs in CI on every push and PR. It fails any change to `src/` (tests aside), `data/` or `package.json` that has no changeset. It matches `package.json` as a whole file, so a PR that only touches `devDependencies` or `scripts` needs `pnpm changeset --empty`. On main it compares main with itself and always passes.
+- On push to main the Release workflow (`.github/workflows/release.yml`, `changesets/action`) opens or updates the "Upcoming Release" PR: `changeset version` bumps `package.json` and writes `CHANGELOG.md`.
+- Merging that PR runs `pnpm run ci:publish` (`ci:build` + `changeset publish`) with npm trusted publishing (OIDC, no token in the repo), and creates the GitHub release and the tag `throng-mcp@x.y.z`.
+- The first publish goes by hand from a clean checkout, `pnpm publish --access public`: npmjs.com configures a trusted publisher only on a package that already exists (THRONG-18). Until `throng-mcp@0.1.0` is on npm, every Release run on main fails at `changeset publish` and publishes or tags nothing. So publish by hand right after the release setup lands on main, or before pushing it.
 
 ## Files on disk
 
