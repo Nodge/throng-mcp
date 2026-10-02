@@ -1,0 +1,56 @@
+import { Semaphore } from './semaphore.ts';
+
+// Live sessions of this process (DESIGN §4). For now only the per-session turn queue of §3.3.
+
+interface Entry {
+    lock: Semaphore;
+    /** The holder plus the waiters; the entry is dropped at zero. */
+    users: number;
+}
+
+/** One per server process: turns on one session_id run one after another, FIFO. */
+export class SessionRegistry {
+    readonly #entries = new Map<string, Entry>();
+
+    /**
+     * Resolves with an idempotent release once no other turn holds `sessionId`; `onQueued` fires when the call
+     * has to wait. Rejects `cancelled` when `signal` aborts first.
+     */
+    async acquire(sessionId: string, signal: AbortSignal, onQueued: (waiting: number) => void): Promise<() => void> {
+        const entry = this.#entries.get(sessionId) ?? {
+            lock: new Semaphore(1, "cancelled while waiting for the session's running turn to end"),
+            users: 0,
+        };
+        this.#entries.set(sessionId, entry);
+        entry.users++;
+        const leave = () => {
+            if (--entry.users === 0) this.#entries.delete(sessionId);
+        };
+        const acquiring = entry.lock.acquire(signal);
+        if (entry.lock.waiting > 0 && !signal.aborted) onQueued(entry.lock.waiting);
+        let release: () => void;
+        try {
+            release = await acquiring;
+        } catch (err) {
+            leave();
+            throw err;
+        }
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            release();
+            leave();
+        };
+    }
+
+    /** A turn holds the session (it runs or is about to start). */
+    busy(sessionId: string): boolean {
+        return this.#entries.has(sessionId);
+    }
+
+    /** Calls queued behind the session's running turn. */
+    waiting(sessionId: string): number {
+        return this.#entries.get(sessionId)?.lock.waiting ?? 0;
+    }
+}

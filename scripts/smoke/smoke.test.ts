@@ -98,8 +98,8 @@ describe('smoke script against the fake agent', () => {
         const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--prompt', 'x'], 'write-pong');
         expect(code, stdout + stderr).toBe(0);
         expect(stdout).toMatch(/PASS: pong\.txt written/);
-        expect(stdout).toMatch(/^\d+\. resume_thronglet session_id=fake-/m);
-        expect(stdout).toMatch(/PASS: resume answered pong\.txt/);
+        expect(stdout).toMatch(/^\d+\. send_message session_id=fake-/m);
+        expect(stdout).toMatch(/PASS: send_message answered pong\.txt/);
         expect(stdout).toMatch(/adapter processes before: (none|[\d ]+)$/m);
         expect(stdout).toMatch(/PASS: no orphans/);
         expect(stdout).toMatch(/session_id: fake-[0-9a-f-]+/);
@@ -109,7 +109,7 @@ describe('smoke script against the fake agent', () => {
 
     it('--schema: run_thronglet with the schema, structured checked', async () => {
         const { code, stdout, stderr, tag } = await smoke(
-            ['claude/fake-small', '--schema', '--no-resume'],
+            ['claude/fake-small', '--schema', '--no-follow-up'],
             'submit-valid',
             bin,
             { FAKE_SUBMIT: JSON.stringify({ file: 'pong.txt', content: 'pong' }) }
@@ -123,15 +123,15 @@ describe('smoke script against the fake agent', () => {
         expect(tagAlive(tag), 'fake agent left running').toBe(false);
     });
 
-    it('--no-resume skips the resume step', async () => {
+    it('--no-follow-up skips the send_message step', async () => {
         const { code, stdout, stderr, tag } = await smoke(
-            ['claude/fake-small', '--prompt', 'x', '--no-resume'],
+            ['claude/fake-small', '--prompt', 'x', '--no-follow-up'],
             'write-pong'
         );
         expect(code, stdout + stderr).toBe(0);
         expect(stdout).toMatch(/PASS: pong\.txt written/);
-        expect(stdout).toMatch(/resume step skipped \(--no-resume\)/);
-        expect(stdout).not.toMatch(/\. resume_thronglet/);
+        expect(stdout).toMatch(/follow-up step skipped \(--no-follow-up\)/);
+        expect(stdout).not.toMatch(/\. send_message/);
         expect(stdout).toMatch(/PASS: no orphans/);
         expect(tagAlive(tag), 'fake agent left running').toBe(false);
     });

@@ -6,7 +6,7 @@ import { type RunContext, type RunOutcome, runCall } from '../../run.ts';
 import { compileSchema } from '../../structured/validate.ts';
 import type { ToolEnv } from '../tools.ts';
 
-/** Shared with resume_thronglet. An invalid schema is an input error (DESIGN §6): ajv must compile it. */
+/** Shared with send_message. An invalid schema is an input error (DESIGN §6): ajv must compile it. */
 export const schemaField = z
     .record(z.string(), z.unknown())
     .superRefine((schema, ctx) => {
@@ -37,6 +37,7 @@ const inputSchema = {
         .string()
         .refine(isAbsolute, 'cwd must be an absolute path')
         .describe('Absolute path; the agent works in this tree'),
+    description: z.string().min(1).describe('What this thronglet is for, in a few words; shown in session listings'),
     schema: schemaField,
     timeout_s: timeoutField,
 };
@@ -52,7 +53,13 @@ export function runThronglet(input: RunThrongletInput, ctx: RunContext): Promise
             schema: input.schema,
             timeout_s: input.timeout_s,
             logFields: { agent: input.agent },
-            request: () => Promise.resolve({ kind: 'new', spec: parseAgentSpec(input.agent), cwd: input.cwd }),
+            request: () =>
+                Promise.resolve({
+                    kind: 'new',
+                    spec: parseAgentSpec(input.agent),
+                    cwd: input.cwd,
+                    description: input.description,
+                }),
         },
         ctx
     );
@@ -64,7 +71,8 @@ export function register(server: McpServer, env: ToolEnv): void {
         {
             description:
                 'Runs a coding agent (Claude Code, Codex, OpenCode) on a task in cwd and returns its final message as JSON ' +
-                '{session_id, text, stop_reason, usage, duration_s, warnings?}; with schema, structured replaces text.',
+                '{session_id, text, stop_reason, usage, duration_s, warnings?}; with schema, structured replaces text. ' +
+                'description names the thronglet for listings.',
             inputSchema,
         },
         (args, extra) => env.callRun(extra, ctx => runThronglet(args, ctx))

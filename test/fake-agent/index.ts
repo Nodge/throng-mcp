@@ -28,6 +28,9 @@ export type FakeScenario =
     | 'submit-invalid-always'
     | 'submit-ask';
 
+// Knobs besides FAKE_SCENARIO (env of the agent process): FAKE_TURN_MS — an echo turn takes that long before answering
+// (default 0); FAKE_MEMORY_DIR — where resume-memory keeps its notes; FAKE_SUBMIT — the valid submit_result (JSON).
+
 const agentPath = fileURLToPath(new URL('./agent.ts', import.meta.url));
 
 /**

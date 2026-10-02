@@ -24,18 +24,21 @@ import { log } from './log.ts';
 import { createPermissionBridge, type PermissionBridge, resolvePolicy } from './permissions.ts';
 import type { Progress } from './progress.ts';
 import { buildCorrectivePrompt, buildPrompt } from './prompt.ts';
+import type { SessionRegistry } from './registry.ts';
 import type { Semaphore } from './semaphore.ts';
 import { type SessionRecord, touchSessionRecord, writeSessionRecord } from './sessions.ts';
 import type { SubmitState } from './structured/validate.ts';
 
-// The pipeline shared by run_thronglet and resume_thronglet (DESIGN §3.2, §3.3, §4.2, §7):
-// guards → semaphore → Worker → auto policy → model/effort → prompt → payload. The adapter's lifetime is in lifecycle.ts.
+// The pipeline shared by run_thronglet and send_message (DESIGN §3.2, §3.3, §4.2, §7):
+// guards → session queue → semaphore → Worker → auto policy → model/effort → prompt → payload. The adapter's lifetime is in lifecycle.ts.
 
 export interface RunContext {
     loaded: LoadedConfig;
     /** This server's depth (`THRONG_MCP_DEPTH`). */
     depth: number;
     semaphore: Semaphore;
+    /** One per process: the per-session turn queue (DESIGN §3.3). */
+    sessions: SessionRegistry;
     /** The MCP call's `extra.signal`: client cancel or transport close. */
     signal: AbortSignal;
     progress: Progress;
@@ -60,7 +63,8 @@ const SUBMIT_TOOL = fileURLToPath(new URL('./structured/submit-tool.ts', import.
 
 /** What to start: a new session from the agent spec, or an earlier one from its session record. */
 export type RunRequest =
-    { kind: 'new'; spec: AgentSpec; cwd: string } | { kind: 'resume'; sessionId: string; record: SessionRecord };
+    | { kind: 'new'; spec: AgentSpec; cwd: string; description: string }
+    | { kind: 'resume'; sessionId: string; record: SessionRecord };
 
 /** A tool call as the shared pipeline sees it; built by the tool (src/mcp/tools/). */
 export interface Call {
@@ -75,7 +79,7 @@ export interface Call {
     request: () => Promise<RunRequest>;
 }
 
-/** Runs one run_thronglet / resume_thronglet call. Never throws: every failure is a `{ ok: false }` payload with an ErrorCode. */
+/** Runs one run_thronglet / send_message call. Never throws: every failure is a `{ ok: false }` payload with an ErrorCode. */
 export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> {
     const now = ctx.now ?? Date.now;
     const t0 = now();
@@ -87,6 +91,8 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
     const lifecycle = new RunLifecycle(ctx.signal);
     let bridge: PermissionBridge | undefined;
     let sessionId: string | undefined;
+    /** Releases the session's turn lock; given back once the adapter is gone and the record is touched. */
+    let unlockSession: (() => void) | undefined;
     /** Mode requested by the permission policy; the agent may fall back to another one (claude: auto → acceptEdits). */
     let requestedMode: string | undefined;
     /** Temp dir of the structured-output run: schema.json and submit-tool's result.json. */
@@ -164,10 +170,15 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
             throw new ThrongError('spawn_failed', `${what} does not exist or is not a directory: ${target.cwd}`);
         }
 
-        // Queue wait counts neither toward timeout_s nor toward duration_s (DESIGN §7).
+        // Queue wait (the session's own queue, then the semaphore) counts neither toward timeout_s nor toward
+        // duration_s (DESIGN §7). Session lock first: a turn waiting for its session holds no slot.
+        const onQueued = (waiting: number) => ctx.progress.queued(waiting);
         const queuedAt = now();
         try {
-            await lifecycle.acquire(ctx.semaphore, waiting => ctx.progress.queued(waiting));
+            if (request.kind === 'resume') {
+                unlockSession = await ctx.sessions.acquire(request.sessionId, ctx.signal, onQueued);
+            }
+            await lifecycle.acquire(ctx.semaphore, onQueued);
         } finally {
             waitedMs = now() - queuedAt;
         }
@@ -226,18 +237,22 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
 
         sessionId = worker.session.sessionId;
         if (request.kind === 'new') {
+            // A brand-new id is never contended, but the lock is taken before the record exists: a send_message that
+            // reads the record must queue behind this turn.
+            unlockSession = await ctx.sessions.acquire(sessionId, ctx.signal, onQueued);
             const createdAt = new Date(now()).toISOString();
             await writeSessionRecord(ctx.cacheDir, sessionId, {
                 harness: target.harness,
                 model: target.model,
                 ...(target.effort ? { effort: target.effort } : {}),
                 cwd: target.cwd,
+                description: request.description,
                 created_at: createdAt,
                 last_used_at: createdAt,
             }).catch((err: unknown) => {
                 log.warn('session record not written', { session: sessionId, error: errorText(err) });
                 warnings.push(
-                    `session record not written (${errorText(err)}); resume_thronglet will not find this session`
+                    `session record not written (${errorText(err)}); send_message will not find this session`
                 );
             });
         }
@@ -349,6 +364,8 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         }
     } catch (err) {
         log.error('run cleanup failed', { error: errorText(err) });
+    } finally {
+        if (unlockSession) lifecycle.whenGone(unlockSession);
     }
     // After close: the tree kill has taken the harness's submit-tool child with it.
     if (structuredDir !== undefined) {

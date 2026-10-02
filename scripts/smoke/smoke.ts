@@ -11,13 +11,13 @@ import { parseAgentSpec } from '../../src/agent-spec.ts';
 import type { ListHarnessesOutput, RunFailure, RunSuccess } from '../../src/contract.ts';
 
 // Manual smoke against a REAL harness (DESIGN §9): starts `node src/mcp.ts` with the user's own env, config and cache,
-// runs list_harnesses and one run_thronglet, checks the file the agent wrote, asks a resume_thronglet follow-up about it,
+// runs list_harnesses and one run_thronglet, checks the file the agent wrote, asks a send_message follow-up about it,
 // and checks that no adapter process is left. With --schema the run_thronglet step asks for structured output
 // (DESIGN §6) and checks `structured` as well.
 // Spends tokens: run by hand, one harness at a time. Exit: 0 pass, 1 any FAIL or tool error, 2 usage/availability.
 
 const USAGE =
-    'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-resume] [--schema]';
+    'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-follow-up] [--schema]';
 const DEFAULT_PROMPT =
     'Create a file named pong.txt in the current directory containing exactly the word pong (no newline needed), then reply with the single word: done.';
 const SCHEMA_PROMPT =
@@ -28,7 +28,7 @@ const SMOKE_SCHEMA = {
     properties: { file: { type: 'string' }, content: { type: 'string' } },
     required: ['file', 'content'],
 };
-const RESUME_PROMPT = 'Which file did you create in the previous step? Reply with the bare file name only.';
+const FOLLOW_UP_PROMPT = 'Which file did you create in the previous step? Reply with the bare file name only.';
 const DEFAULT_TIMEOUT_S = 300;
 // submit-tool: the structured-output server the harness spawns; its argv carries the run's temp dir under our TMPDIR.
 const ADAPTER_PATTERNS = [
@@ -59,7 +59,7 @@ try {
             prompt: { type: 'string' },
             cwd: { type: 'string' },
             timeout: { type: 'string' },
-            'no-resume': { type: 'boolean' },
+            'no-follow-up': { type: 'boolean' },
             schema: { type: 'boolean' },
         },
     });
@@ -113,7 +113,7 @@ function textOf(result: Record<string, unknown>): string {
     return content?.[0]?.text ?? '';
 }
 
-/** Prints the fields of a run_thronglet / resume_thronglet result. */
+/** Prints the fields of a run_thronglet / send_message result. */
 function printResult(result: Record<string, unknown>): { isError: boolean; payload: Partial<RunSuccess & RunFailure> } {
     const isError = result.isError === true;
     const payload = JSON.parse(textOf(result)) as Partial<RunSuccess & RunFailure>;
@@ -220,6 +220,7 @@ try {
                 arguments: {
                     agent,
                     prompt: values.prompt ?? (withSchema ? SCHEMA_PROMPT : DEFAULT_PROMPT),
+                    description: 'smoke: ping/pong',
                     cwd,
                     timeout_s: timeoutS,
                     ...(withSchema ? { schema: SMOKE_SCHEMA } : {}),
@@ -264,16 +265,16 @@ try {
                 : `pong.txt contains ${JSON.stringify(content.slice(0, 100))}, expected pong`
         );
 
-        if (values['no-resume']) {
-            console.log('   resume step skipped (--no-resume)');
+        if (values['no-follow-up']) {
+            console.log('   follow-up step skipped (--no-follow-up)');
         } else if (isError || !payload.session_id) {
-            console.log('   resume step skipped: run_thronglet failed');
+            console.log('   follow-up step skipped: run_thronglet failed');
         } else {
-            say(`resume_thronglet session_id=${payload.session_id} timeout_s=${timeoutS}`);
-            const resumed = await client.callTool(
+            say(`send_message session_id=${payload.session_id} timeout_s=${timeoutS}`);
+            const sent = await client.callTool(
                 {
-                    name: 'resume_thronglet',
-                    arguments: { session_id: payload.session_id, prompt: RESUME_PROMPT, timeout_s: timeoutS },
+                    name: 'send_message',
+                    arguments: { session_id: payload.session_id, prompt: FOLLOW_UP_PROMPT, timeout_s: timeoutS },
                 },
                 CallToolResultSchema,
                 {
@@ -281,14 +282,14 @@ try {
                     timeout: (timeoutS + 60) * 1000,
                 }
             );
-            const follow = printResult(resumed);
+            const follow = printResult(sent);
             const text = follow.payload.text ?? '';
             check(
                 !follow.isError && text.includes('pong.txt'),
-                'resume answered pong.txt',
+                'send_message answered pong.txt',
                 follow.isError
-                    ? `resume failed with ${follow.payload.code}`
-                    : `resume answered ${JSON.stringify(text.slice(0, 100))}, expected pong.txt`
+                    ? `send_message failed with ${follow.payload.code}`
+                    : `send_message answered ${JSON.stringify(text.slice(0, 100))}, expected pong.txt`
             );
         }
     }

@@ -103,9 +103,14 @@ export class RunLifecycle {
         this.#clientSignal.removeEventListener('abort', this.#onClientAbort);
         if (this.#worker) await this.#worker.close();
         const release = this.#release;
-        if (this.#lingering) void this.#lingering.finally(() => release?.());
-        else release?.();
+        if (release) this.whenGone(release);
         return this.#worker;
+    }
+
+    /** After `close`: runs `fn` once no adapter of this call is left, i.e. now or when a lingering handshake settles. */
+    whenGone(fn: () => void): void {
+        if (this.#lingering) void this.#lingering.finally(fn);
+        else fn();
     }
 
     #halt(code: ErrorCode, message: string): void {

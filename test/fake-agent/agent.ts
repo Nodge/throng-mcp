@@ -21,6 +21,8 @@ import { EXECUTOR_PREFIX } from '../../src/prompt.ts';
 // Every echo turn also sends `session_info_update` with `_meta.throngDepth` = the THRONG_MCP_DEPTH it sees.
 
 const scenario = process.env.FAKE_SCENARIO ?? 'echo';
+/** FAKE_TURN_MS: an echo turn takes this long before answering (a cancel cuts it short); 0 by default. */
+const turnMs = Number(process.env.FAKE_TURN_MS ?? 0);
 
 interface FakeSession {
     resumed: boolean;
@@ -155,6 +157,21 @@ function step(signal: AbortSignal): Promise<void> {
     });
 }
 
+/** Resolves after `ms`, rejects as soon as the prompt is cancelled. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, ms);
+        signal.addEventListener(
+            'abort',
+            () => {
+                clearTimeout(timer);
+                reject(new Error('cancelled'));
+            },
+            { once: true }
+        );
+    });
+}
+
 async function runTurn(sessionId: string, text: string, client: AgentContext, signal: AbortSignal): Promise<void> {
     const session = getSession(sessionId);
     const send = (update: SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId, update });
@@ -247,6 +264,9 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
             await submit(session, VALID_SUBMIT);
             return;
         }
+        case 'echo':
+            if (turnMs > 0) await sleep(turnMs, signal);
+            break;
         case 'hang':
             await new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled'))));
             return;

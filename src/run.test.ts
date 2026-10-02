@@ -19,8 +19,9 @@ import type { RunFailure, RunSuccess } from './contract.ts';
 import { createProgress, type ProgressNotification } from './mcp/progress.ts';
 import { noProgress, type Progress } from './progress.ts';
 import { EXECUTOR_PREFIX } from './prompt.ts';
-import { resumeThronglet } from './mcp/tools/resume-thronglet.ts';
 import { runThronglet } from './mcp/tools/run-thronglet.ts';
+import { sendMessage } from './mcp/tools/send-message.ts';
+import { SessionRegistry } from './registry.ts';
 import type { RunContext, RunOutcome } from './run.ts';
 import { Semaphore } from './semaphore.ts';
 import { type SessionRecord, writeSessionRecord } from './sessions.ts';
@@ -99,6 +100,7 @@ function makeCtx(loaded: LoadedConfig, overrides: Partial<RunContext> = {}): Run
         loaded,
         depth: 0,
         semaphore: new Semaphore(10),
+        sessions: new SessionRegistry(),
         signal: new AbortController().signal,
         progress: noProgress,
         env,
@@ -170,6 +172,7 @@ const input = (agent: string, extra: Record<string, unknown> = {}) => ({
     agent,
     prompt: 'do the thing',
     cwd: work,
+    description: 'test run',
     ...extra,
 });
 
@@ -196,6 +199,7 @@ describe('runThronglet', () => {
         expect(record.harness).toBe('claude');
         expect(record.model).toBe('fake-small');
         expect(record.cwd).toBe(work);
+        expect(record.description).toBe('test run');
         expect(record.effort).toBe(undefined);
         expect(Date.parse(record.created_at) <= Date.parse(record.last_used_at)).toBe(true);
     });
@@ -491,7 +495,7 @@ describe('runThronglet', () => {
     });
 });
 
-describe('resumeThronglet', () => {
+describe('sendMessage', () => {
     /** Writes a session record by hand, as a run_thronglet call would have. */
     async function record(ctx: RunContext, sessionId: string, fields: Partial<SessionRecord> = {}): Promise<void> {
         const at = new Date().toISOString();
@@ -499,6 +503,7 @@ describe('resumeThronglet', () => {
             harness: 'claude',
             model: 'fake-small',
             cwd: work,
+            description: '',
             created_at: at,
             last_used_at: at,
         };
@@ -516,7 +521,7 @@ describe('resumeThronglet', () => {
         const before = JSON.parse(readFileSync(recordPath, 'utf8')) as SessionRecord;
         await new Promise(resolve => setTimeout(resolve, 10));
 
-        const second = ok(await resumeThronglet({ session_id: first.session_id, prompt: 'what did I say?' }, ctx));
+        const second = ok(await sendMessage({ session_id: first.session_id, prompt: 'what did I say?' }, ctx));
         expect(second.session_id).toBe(first.session_id);
         expect(second.text).toBe('you said: remember: banana [model=fake-large effort=high]');
         expect(second.stop_reason).toBe('end_turn');
@@ -536,15 +541,12 @@ describe('resumeThronglet', () => {
     it('unknown or unsafe id → session_not_found before spawn', async () => {
         const { loaded, tag } = fakeClaude('resume-memory');
         const ctx = makeCtx(loaded);
-        const unknown = failed(
-            await resumeThronglet({ session_id: 'fake-nope', prompt: 'x' }, ctx),
-            'session_not_found'
-        );
+        const unknown = failed(await sendMessage({ session_id: 'fake-nope', prompt: 'x' }, ctx), 'session_not_found');
         expect(unknown.message).toMatch(
             /^no session record for "fake-nope" \(records live 14 days under .*\/sessions\)$/
         );
         expect(unknown.session_id).toBe(undefined);
-        const unsafe = failed(await resumeThronglet({ session_id: '../etc', prompt: 'x' }, ctx), 'session_not_found');
+        const unsafe = failed(await sendMessage({ session_id: '../etc', prompt: 'x' }, ctx), 'session_not_found');
         expect(unsafe.message).toMatch(/no session record for "\.\.\/etc"/);
         expect(tagAlive(tag)).toBe(false);
         expect(readdirSync(ctx.cacheDir), 'nothing written for a call that never started').toStrictEqual([]);
@@ -560,10 +562,10 @@ describe('resumeThronglet', () => {
         );
         writeFileSync(join(ctx.cacheDir, 'sessions', 'fake-junk.json'), '{');
         expect(
-            failed(await resumeThronglet({ session_id: 'fake-bad', prompt: 'x' }, ctx), 'session_not_found').message
+            failed(await sendMessage({ session_id: 'fake-bad', prompt: 'x' }, ctx), 'session_not_found').message
         ).toMatch(/corrupt/);
         expect(
-            failed(await resumeThronglet({ session_id: 'fake-junk', prompt: 'x' }, ctx), 'session_not_found').message
+            failed(await sendMessage({ session_id: 'fake-junk', prompt: 'x' }, ctx), 'session_not_found').message
         ).toMatch(/unreadable/);
     });
 
@@ -571,7 +573,7 @@ describe('resumeThronglet', () => {
         const { loaded, tag } = fakeClaude('no-resume');
         const ctx = makeCtx(loaded);
         await record(ctx, 'fake-a');
-        const payload = failed(await resumeThronglet({ session_id: 'fake-a', prompt: 'x' }, ctx), 'session_not_found');
+        const payload = failed(await sendMessage({ session_id: 'fake-a', prompt: 'x' }, ctx), 'session_not_found');
         expect(payload.message).toMatch(/session\/resume/);
         expect(tagAlive(tag)).toBe(false);
     });
@@ -583,7 +585,7 @@ describe('resumeThronglet', () => {
         const ctx = makeCtx(loaded);
         await record(ctx, 'fake-forgotten');
         const payload = failed(
-            await resumeThronglet({ session_id: 'fake-forgotten', prompt: 'x' }, ctx),
+            await sendMessage({ session_id: 'fake-forgotten', prompt: 'x' }, ctx),
             'session_not_found'
         );
         expect(payload.message).toMatch(/unknown session fake-forgotten/);
@@ -594,14 +596,14 @@ describe('resumeThronglet', () => {
         const { loaded } = fakeClaude('echo');
         const ctx = makeCtx(loaded);
         await record(ctx, 'codex-a', { harness: 'codex', model: 'gpt' });
-        const codex = failed(await resumeThronglet({ session_id: 'codex-a', prompt: 'x' }, ctx), 'harness_unavailable');
+        const codex = failed(await sendMessage({ session_id: 'codex-a', prompt: 'x' }, ctx), 'harness_unavailable');
         expect(codex.message).toMatch(/codex-acp not found on PATH; install: npm i -g @agentclientprotocol\/codex-acp/);
 
         const gone = join(root, `gone-${randomUUID()}`);
         mkdirSync(gone);
         await record(ctx, 'fake-gone', { cwd: gone });
         rmSync(gone, { recursive: true });
-        const spawn = failed(await resumeThronglet({ session_id: 'fake-gone', prompt: 'x' }, ctx), 'spawn_failed');
+        const spawn = failed(await sendMessage({ session_id: 'fake-gone', prompt: 'x' }, ctx), 'spawn_failed');
         expect(spawn.message.includes(gone), spawn.message).toBe(true);
     });
 
@@ -611,7 +613,7 @@ describe('resumeThronglet', () => {
         await record(ctx, 'fake-hang');
         const started = Date.now();
         const payload = failed(
-            await resumeThronglet({ session_id: 'fake-hang', prompt: 'x', timeout_s: 1 }, ctx),
+            await sendMessage({ session_id: 'fake-hang', prompt: 'x', timeout_s: 1 }, ctx),
             'timeout'
         );
         expect(Date.now() - started < 2500, `took ${Date.now() - started} ms`).toBe(true);
@@ -624,7 +626,7 @@ describe('resumeThronglet', () => {
         const deniedCtx = makeCtx(denied.loaded);
         await record(deniedCtx, 'fake-a');
         const policy = failed(
-            await resumeThronglet({ session_id: 'fake-a', prompt: 'x' }, deniedCtx),
+            await sendMessage({ session_id: 'fake-a', prompt: 'x' }, deniedCtx),
             'harness_unavailable'
         );
         expect(policy.message).toMatch(/permissions "deny_all" is not supported yet/);
@@ -632,7 +634,7 @@ describe('resumeThronglet', () => {
         const deep = fakeClaude('echo', 'limits: { max_depth: 2 }');
         const deepCtx = makeCtx(deep.loaded, { depth: 2 });
         await record(deepCtx, 'fake-a');
-        failed(await resumeThronglet({ session_id: 'fake-a', prompt: 'x' }, deepCtx), 'depth_exceeded');
+        failed(await sendMessage({ session_id: 'fake-a', prompt: 'x' }, deepCtx), 'depth_exceeded');
         expect(tagAlive(deep.tag)).toBe(false);
     });
 
@@ -641,7 +643,7 @@ describe('resumeThronglet', () => {
         const ctx = makeCtx(loaded);
         await record(ctx, 'fake-a');
         const { result, tmp } = await inTmp(() =>
-            resumeThronglet({ session_id: 'fake-a', prompt: 'x', schema: SUBMIT_SCHEMA }, ctx)
+            sendMessage({ session_id: 'fake-a', prompt: 'x', schema: SUBMIT_SCHEMA }, ctx)
         );
         const payload = ok(result);
         expect(payload.session_id).toBe('fake-a');
@@ -649,5 +651,173 @@ describe('resumeThronglet', () => {
         expect('text' in payload).toBe(false);
         expect(tagAlive(tag), 'adapter still running').toBe(false);
         expectStructuredGone(tmp);
+    });
+});
+
+describe('session queue', () => {
+    /** Progress that logs into a shared `events` list as `<name> <event>`; `onStarted` runs just before `started` is logged. */
+    function loggingProgress(name: string, events: string[], onStarted?: () => void): Progress {
+        return {
+            queued: n => events.push(`${name} queued ${n}`),
+            started: () => {
+                onStarted?.();
+                events.push(`${name} started`);
+            },
+            tool: () => {
+                /* not logged */
+            },
+            text: () => {
+                /* not logged */
+            },
+            done: () => events.push(`${name} done`),
+            idle: () => Promise.resolve(),
+        };
+    }
+
+    async function record(ctx: RunContext, sessionId: string): Promise<void> {
+        const at = new Date().toISOString();
+        await writeSessionRecord(ctx.cacheDir, sessionId, {
+            harness: 'claude',
+            model: 'fake-small',
+            cwd: work,
+            description: '',
+            created_at: at,
+            last_used_at: at,
+        });
+    }
+
+    it('two send_message calls on one session: the second queues, starts after the first adapter is gone', async () => {
+        const { loaded, tag } = fakeClaude('hang');
+        const sessions = new SessionRegistry();
+        const events: string[] = [];
+        let adapterAtBStart: boolean | undefined;
+        const aCtx = makeCtx(loaded, { sessions, progress: loggingProgress('A', events) });
+        await record(aCtx, 'fake-q');
+        // A holds the session for 2 s so B's wait clears the 1 s `queued` warning threshold with margin.
+        const a = sendMessage({ session_id: 'fake-q', prompt: 'A', timeout_s: 2 }, aCtx);
+        await waitFor('A holds the session', () => sessions.busy('fake-q'));
+        const bCtx = makeCtx(loaded, {
+            sessions,
+            cacheDir: aCtx.cacheDir,
+            progress: loggingProgress('B', events, () => (adapterAtBStart = tagAlive(tag))),
+        });
+        const bStarted = Date.now();
+        const b = sendMessage({ session_id: 'fake-q', prompt: 'B', timeout_s: 1 }, bCtx);
+        await waitFor('B queued', () => sessions.waiting('fake-q') === 1);
+
+        failed(await a, 'timeout');
+        const bPayload = failed(await b, 'timeout');
+        const bWall = Date.now() - bStarted;
+        expect(events).toStrictEqual(['A started', 'B queued 1', 'A done', 'B started', 'B done']);
+        expect(adapterAtBStart, "A's adapter still up when B started").toBe(false);
+        expect(bPayload.session_id).toBe('fake-q');
+        expect(bPayload.duration_s < 2.5, `duration_s ${bPayload.duration_s}, wall ${bWall} ms`).toBe(true);
+        expect(bPayload.duration_s * 1000 < bWall - 500, `duration_s ${bPayload.duration_s}, wall ${bWall} ms`).toBe(
+            true
+        );
+        expect(
+            bPayload.warnings?.some(w => /^queued \d+\.\d s$/.test(w)),
+            JSON.stringify(bPayload.warnings)
+        ).toBe(true);
+        expect(sessions.busy('fake-q')).toBe(false);
+        expect(tagAlive(tag), 'adapter still running').toBe(false);
+    });
+
+    it('two echo turns on one session both succeed, one after the other', async () => {
+        const { loaded, tag } = fakeClaude('echo', '', { FAKE_TURN_MS: '800' });
+        const sessions = new SessionRegistry();
+        const events: string[] = [];
+        const aCtx = makeCtx(loaded, { sessions, progress: loggingProgress('A', events) });
+        await record(aCtx, 'fake-e');
+        const a = sendMessage({ session_id: 'fake-e', prompt: 'first message' }, aCtx);
+        await waitFor('A holds the session', () => sessions.busy('fake-e'));
+        const b = sendMessage(
+            { session_id: 'fake-e', prompt: 'second message' },
+            makeCtx(loaded, { sessions, cacheDir: aCtx.cacheDir, progress: loggingProgress('B', events) })
+        );
+        const aPayload = ok(await a);
+        const bPayload = ok(await b);
+        expect(events).toStrictEqual(['A started', 'B queued 1', 'A done', 'B started', 'B done']);
+        expect(aPayload.text?.includes('first message'), aPayload.text).toBe(true);
+        expect(bPayload.text?.startsWith('resumed: echo: '), bPayload.text).toBe(true);
+        expect(bPayload.text?.includes('second message'), bPayload.text).toBe(true);
+        expect(bPayload.text?.includes('first message'), bPayload.text).toBe(false);
+        expect(sessions.busy('fake-e')).toBe(false);
+        expect(tagAlive(tag), 'adapter still running').toBe(false);
+    });
+
+    it('abort while queued → cancelled; the lock is released and a later call proceeds', async () => {
+        const hang = fakeClaude('hang');
+        const sessions = new SessionRegistry();
+        const first = new AbortController();
+        const second = new AbortController();
+        const aCtx = makeCtx(hang.loaded, { sessions, signal: first.signal });
+        await record(aCtx, 'fake-c');
+        const a = sendMessage({ session_id: 'fake-c', prompt: 'A' }, aCtx);
+        await waitFor('A holds the session', () => sessions.busy('fake-c'));
+        const bProgress = recordingProgress();
+        const b = sendMessage(
+            { session_id: 'fake-c', prompt: 'B' },
+            makeCtx(hang.loaded, { sessions, cacheDir: aCtx.cacheDir, signal: second.signal, progress: bProgress })
+        );
+        await waitFor('B queued', () => sessions.waiting('fake-c') === 1);
+        second.abort();
+        const bPayload = failed(await b, 'cancelled');
+        expect(bPayload.message).toBe("cancelled while waiting for the session's running turn to end");
+        expect(bProgress.calls).toStrictEqual(['queued 1', 'done']);
+        expect(sessions.waiting('fake-c')).toBe(0);
+        expect(sessions.busy('fake-c'), 'A still holds the session').toBe(true);
+
+        // A may still be in its handshake: then the lock is held until that lingering adapter is gone.
+        first.abort();
+        failed(await a, 'cancelled');
+        await waitFor('lock released', () => !sessions.busy('fake-c'));
+        expect(tagAlive(hang.tag), 'lock released while the adapter was still up').toBe(false);
+
+        const echo = fakeClaude('echo');
+        const cProgress = recordingProgress();
+        const c = ok(
+            await sendMessage(
+                { session_id: 'fake-c', prompt: 'third message' },
+                makeCtx(echo.loaded, { sessions, cacheDir: aCtx.cacheDir, progress: cProgress })
+            )
+        );
+        expect(c.text?.includes('third message'), c.text).toBe(true);
+        expect(
+            cProgress.calls.some(call => call.startsWith('queued')),
+            JSON.stringify(cProgress.calls)
+        ).toBe(false);
+    });
+
+    it('cancel during the handshake: the session stays locked until the adapter is gone', async () => {
+        const { loaded, tag } = fakeClaude('handshake-hang', 'limits: { handshake_s: 1 }');
+        const sessions = new SessionRegistry();
+        const controller = new AbortController();
+        const ctx = makeCtx(loaded, { sessions, signal: controller.signal });
+        await record(ctx, 'fake-h');
+        const call = sendMessage({ session_id: 'fake-h', prompt: 'x' }, ctx);
+        await waitFor('adapter', () => tagAlive(tag));
+        controller.abort();
+        failed(await call, 'cancelled');
+        expect(sessions.busy('fake-h'), 'lock released while the adapter was still up').toBe(true);
+        await waitFor('lock released', () => !sessions.busy('fake-h'));
+        expect(tagAlive(tag), 'adapter still running').toBe(false);
+    });
+
+    it('run_thronglet: the new session is busy while its turn runs, idle after close', async () => {
+        const { loaded, tag } = fakeClaude('hang');
+        const sessions = new SessionRegistry();
+        const controller = new AbortController();
+        const ctx = makeCtx(loaded, { sessions, signal: controller.signal });
+        const running = runThronglet(input('claude/fake-small'), ctx);
+        const dir = join(ctx.cacheDir, 'sessions');
+        await waitFor('session record', () => existsSync(dir) && readdirSync(dir).length > 0);
+        const id = readdirSync(dir)[0]?.replace(/\.json$/, '') ?? '';
+        expect(sessions.busy(id), `${id} not busy`).toBe(true);
+        controller.abort();
+        const payload = failed(await running, 'cancelled');
+        expect(payload.session_id).toBe(id);
+        expect(sessions.busy(id)).toBe(false);
+        expect(tagAlive(tag), 'adapter still running').toBe(false);
     });
 });

@@ -5,6 +5,7 @@ import { closeAllWorkers } from './acp/worker.ts';
 import { loadConfig, readDepth } from './config.ts';
 import { log } from './log.ts';
 import { registerTools } from './mcp/tools.ts';
+import { SessionRegistry } from './registry.ts';
 import { Semaphore } from './semaphore.ts';
 import { cacheDir, rotate } from './sessions.ts';
 
@@ -24,6 +25,7 @@ const server = new McpServer({ name: 'throng', version });
 const tools = registerTools(server, {
     loaded,
     semaphore: new Semaphore(loaded.config.limits.max_concurrency),
+    sessions: new SessionRegistry(),
     cacheDir: cache,
 });
 const transport = new StdioServerTransport();

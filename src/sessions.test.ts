@@ -20,6 +20,7 @@ describe('sessions', () => {
             model: 'fake-small',
             effort: 'high' as const,
             cwd: '/tmp',
+            description: 'round trip',
             created_at: '2026-01-01T00:00:00.000Z',
             last_used_at: '2026-01-01T00:00:00.000Z',
         };
@@ -37,6 +38,20 @@ describe('sessions', () => {
         expect(existsSync(join(dir, 'sessions', 'missing.json'))).toBe(false);
     });
 
+    it('a record written before description existed reads with description ""', async () => {
+        const dir = join(root, 'legacy');
+        mkdirSync(join(dir, 'sessions'), { recursive: true });
+        const legacy = {
+            harness: 'codex',
+            model: 'gpt',
+            cwd: '/tmp',
+            created_at: '2026-01-01T00:00:00.000Z',
+            last_used_at: '2026-01-01T00:00:00.000Z',
+        };
+        writeFileSync(join(dir, 'sessions', 'old-1.json'), JSON.stringify(legacy));
+        expect(await readSessionRecord(dir, 'old-1')).toStrictEqual({ ...legacy, description: '' });
+    });
+
     it('refuses session ids that would escape the directory', async () => {
         const dir = join(root, 'unsafe');
         await expect(
@@ -44,6 +59,7 @@ describe('sessions', () => {
                 harness: 'claude',
                 model: 'm',
                 cwd: '/',
+                description: '',
                 created_at: '',
                 last_used_at: '',
             })

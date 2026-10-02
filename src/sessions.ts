@@ -12,6 +12,8 @@ export interface SessionRecord {
     model: string;
     effort?: Effort;
     cwd: string;
+    /** From run_thronglet; records written before it existed read as `""`. */
+    description: string;
     created_at: string;
     last_used_at: string;
 }
@@ -51,11 +53,15 @@ export async function writeSessionRecord(dir: string, sessionId: string, record:
     await writeAtomic(path, `${JSON.stringify(record, null, 2)}\n`);
 }
 
-/** `undefined` when there is no such record. */
+/** `undefined` when there is no such record. Not validated beyond JSON: the caller checks the fields it uses. */
 export async function readSessionRecord(dir: string, sessionId: string): Promise<SessionRecord | undefined> {
     if (!isSafeName(sessionId)) return undefined;
     try {
-        return JSON.parse(await readFile(recordPath(dir, sessionId), 'utf8')) as SessionRecord;
+        const record = JSON.parse(await readFile(recordPath(dir, sessionId), 'utf8')) as Partial<SessionRecord> | null;
+        if (typeof record === 'object' && record !== null && typeof record.description !== 'string') {
+            return { ...record, description: '' } as SessionRecord;
+        }
+        return (record ?? undefined) as SessionRecord | undefined;
     } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
         throw err;

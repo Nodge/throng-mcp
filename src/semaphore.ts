@@ -1,6 +1,6 @@
 import { ThrongError } from './contract.ts';
 
-// Per-process limit on concurrent runs (DESIGN §7).
+// Per-process limit on concurrent runs (DESIGN §7); also the per-session lock of registry.ts.
 
 interface Waiter {
     grant: () => void;
@@ -9,11 +9,14 @@ interface Waiter {
 /** FIFO counting semaphore; `acquire` resolves with an idempotent release function. */
 export class Semaphore {
     readonly #max: number;
+    readonly #cancelMessage: string;
     #active = 0;
     #queue: Waiter[] = [];
 
-    constructor(max: number) {
+    /** `cancelMessage` is the `cancelled` error of a waiter whose signal aborts. */
+    constructor(max: number, cancelMessage = 'cancelled while waiting for a free slot (max_concurrency)') {
         this.#max = max;
+        this.#cancelMessage = cancelMessage;
     }
 
     /** Callers queued behind the running ones. */
@@ -23,7 +26,7 @@ export class Semaphore {
 
     /** Rejects with `cancelled` when `signal` aborts before a slot frees up; the waiter then leaves the queue. */
     acquire(signal?: AbortSignal): Promise<() => void> {
-        if (signal?.aborted) return Promise.reject(cancelled());
+        if (signal?.aborted) return Promise.reject(this.#cancelled());
         if (this.#active < this.#max && this.#queue.length === 0) {
             this.#active++;
             return Promise.resolve(this.#releaser());
@@ -31,7 +34,7 @@ export class Semaphore {
         return new Promise((resolve, reject) => {
             const onAbort = () => {
                 this.#queue = this.#queue.filter(w => w !== waiter);
-                reject(cancelled());
+                reject(this.#cancelled());
             };
             const waiter: Waiter = {
                 grant: () => {
@@ -45,6 +48,10 @@ export class Semaphore {
         });
     }
 
+    #cancelled(): ThrongError {
+        return new ThrongError('cancelled', this.#cancelMessage);
+    }
+
     #releaser(): () => void {
         let released = false;
         return () => {
@@ -54,8 +61,4 @@ export class Semaphore {
             if (this.#active < this.#max) this.#queue.shift()?.grant();
         };
     }
-}
-
-function cancelled(): ThrongError {
-    return new ThrongError('cancelled', 'cancelled while waiting for a free slot (max_concurrency)');
 }

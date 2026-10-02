@@ -7,19 +7,22 @@ import type { ToolEnv } from '../tools.ts';
 import { schemaField, timeoutField } from './run-thronglet.ts';
 
 const inputSchema = {
-    session_id: z.string().describe('session_id from a previous run_thronglet / resume_thronglet'),
-    prompt: z.string().describe('Follow-up message for the agent'),
+    session_id: z.string().describe('session_id from run_thronglet'),
+    prompt: z.string().describe('Next message for the agent'),
     schema: schemaField,
     timeout_s: timeoutField,
 };
 
-export type ResumeThrongletInput = z.infer<z.ZodObject<typeof inputSchema>>;
+export type SendMessageInput = z.infer<z.ZodObject<typeof inputSchema>>;
 
-/** DESIGN §3.3: harness, model, effort and cwd come from the session record. Never throws, like runThronglet. */
-export function resumeThronglet(input: ResumeThrongletInput, ctx: RunContext): Promise<RunOutcome> {
+/**
+ * DESIGN §3.3: harness, model, effort and cwd come from the session record; a busy session queues the call.
+ * Never throws, like runThronglet.
+ */
+export function sendMessage(input: SendMessageInput, ctx: RunContext): Promise<RunOutcome> {
     return runCall(
         {
-            tool: 'resume_thronglet',
+            tool: 'send_message',
             prompt: input.prompt,
             schema: input.schema,
             timeout_s: input.timeout_s,
@@ -61,13 +64,14 @@ async function loadRecord(dir: string, sessionId: string): Promise<SessionRecord
 
 export function register(server: McpServer, env: ToolEnv): void {
     server.registerTool(
-        'resume_thronglet',
+        'send_message',
         {
             description:
-                'Sends a follow-up prompt into an earlier session (session_id from run_thronglet / resume_thronglet). ' +
-                'Returns the same JSON as run_thronglet.',
+                'Sends the next message into an earlier session (session_id from run_thronglet) and returns the same JSON ' +
+                'as run_thronglet. A message to a session whose turn is still running waits for that turn to end: turns on ' +
+                'one session never overlap.',
             inputSchema,
         },
-        (args, extra) => env.callRun(extra, ctx => resumeThronglet(args, ctx))
+        (args, extra) => env.callRun(extra, ctx => sendMessage(args, ctx))
     );
 }

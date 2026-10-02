@@ -133,7 +133,7 @@ async function callListHarnesses(env: Record<string, string>): Promise<{ tools: 
 describe('mcp server over stdio', () => {
     it('without adapters on PATH: every harness unavailable with its install hint, default limits', async () => {
         const { tools, out } = await callListHarnesses(serverEnv({}));
-        expect(tools).toStrictEqual(['list_harnesses', 'run_thronglet', 'resume_thronglet']);
+        expect(tools).toStrictEqual(['list_harnesses', 'run_thronglet', 'send_message']);
         expect(out.harnesses).toStrictEqual([]);
         assertInstallHints(out.unavailable, ['claude', 'codex', 'opencode']);
         expect(out.limits).toStrictEqual({
@@ -318,7 +318,7 @@ describe('run_thronglet over stdio', () => {
         try {
             const result = await client.callTool({
                 name: 'run_thronglet',
-                arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo },
+                arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo, description: 'test' },
             });
             expect(result.isError).toBe(undefined);
             expect(result.structuredContent).toBe(undefined);
@@ -329,7 +329,7 @@ describe('run_thronglet over stdio', () => {
 
             const rejected = await client.callTool({
                 name: 'run_thronglet',
-                arguments: { agent: 'claude/nope', prompt: 'hi', cwd: repo },
+                arguments: { agent: 'claude/nope', prompt: 'hi', cwd: repo, description: 'test' },
             });
             expect(rejected.isError).toBe(true);
             const failure = payloadOf(rejected) as RunFailure;
@@ -346,20 +346,37 @@ describe('run_thronglet over stdio', () => {
         try {
             const missing = await client.callTool({
                 name: 'run_thronglet',
-                arguments: { agent: 'claude/fake-small', prompt: 'hi' },
+                arguments: { agent: 'claude/fake-small', prompt: 'hi', description: 'test' },
             });
             expect(missing.isError).toBe(true);
             const relative = await client.callTool({
                 name: 'run_thronglet',
-                arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: 'src' },
+                arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: 'src', description: 'test' },
             });
             expect(relative.isError).toBe(true);
             const badSchema = await client.callTool({
                 name: 'run_thronglet',
-                arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo, schema: { type: 'nope' } },
+                arguments: {
+                    agent: 'claude/fake-small',
+                    prompt: 'hi',
+                    cwd: repo,
+                    description: 'test',
+                    schema: { type: 'nope' },
+                },
             });
             expect(badSchema.isError).toBe(true);
             expect(JSON.stringify(badSchema.content)).toMatch(/schema is invalid: data\/type must be/);
+            const noDescription = await client.callTool({
+                name: 'run_thronglet',
+                arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo },
+            });
+            expect(noDescription.isError).toBe(true);
+            expect(JSON.stringify(noDescription.content)).toMatch(/Input validation error.*description/);
+            const emptyDescription = await client.callTool({
+                name: 'run_thronglet',
+                arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo, description: '' },
+            });
+            expect(emptyDescription.isError).toBe(true);
         } finally {
             await close();
         }
@@ -372,7 +389,10 @@ describe('run_thronglet over stdio', () => {
             setTimeout(() => controller.abort(), 300);
             await expect(
                 client.callTool(
-                    { name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo } },
+                    {
+                        name: 'run_thronglet',
+                        arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo, description: 'test' },
+                    },
                     undefined,
                     {
                         signal: controller.signal,
@@ -390,7 +410,10 @@ describe('run_thronglet over stdio', () => {
         try {
             const messages: string[] = [];
             const result = await client.callTool(
-                { name: 'run_thronglet', arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo } },
+                {
+                    name: 'run_thronglet',
+                    arguments: { agent: 'claude/fake-small', prompt: 'hi', cwd: repo, description: 'test' },
+                },
                 CallToolResultSchema,
                 { onprogress: p => void messages.push(p.message ?? '') }
             );
@@ -401,20 +424,20 @@ describe('run_thronglet over stdio', () => {
         }
     });
 
-    it('resume_thronglet: follow-up into the same session; an unknown id is a session_not_found tool error', async () => {
+    it('send_message: the next turn in the same session; an unknown id is a session_not_found tool error', async () => {
         const { client, tag, close } = await connect('resume-memory', {
             FAKE_MEMORY_DIR: mkdtempSync(join(dir, 'memory-')),
         });
         try {
             const run = await client.callTool({
                 name: 'run_thronglet',
-                arguments: { agent: 'claude/fake-small', prompt: 'remember: banana', cwd: repo },
+                arguments: { agent: 'claude/fake-small', prompt: 'remember: banana', cwd: repo, description: 'test' },
             });
             expect(run.isError).toBe(undefined);
             const first = payloadOf(run) as RunSuccess;
 
             const resumed = await client.callTool({
-                name: 'resume_thronglet',
+                name: 'send_message',
                 arguments: { session_id: first.session_id, prompt: 'what did I say?' },
             });
             expect(resumed.isError).toBe(undefined);
@@ -424,7 +447,7 @@ describe('run_thronglet over stdio', () => {
             expect(second.text?.startsWith('you said: remember: banana'), second.text).toBe(true);
 
             const unknown = await client.callTool({
-                name: 'resume_thronglet',
+                name: 'send_message',
                 arguments: { session_id: 'fake-nope', prompt: 'x' },
             });
             expect(unknown.isError).toBe(true);

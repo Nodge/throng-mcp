@@ -59,7 +59,7 @@ export interface ListHarnessesOutput {
     };
 }
 
-/** Failure codes of `run_thronglet` / `resume_thronglet` (DESIGN §3.2). */
+/** Failure codes of `run_thronglet` / `send_message` (DESIGN §3.2). */
 export type ErrorCode =
     | 'harness_unavailable'
     | 'depth_exceeded'

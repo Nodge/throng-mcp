@@ -25,7 +25,7 @@ export interface WorkerSpawn {
     depth: number;
 }
 
-/** `session/new` for a fresh run, `session/resume` for resume_thronglet (requires `sessionCapabilities.resume`). */
+/** `session/new` for a fresh run, `session/resume` for send_message (requires `sessionCapabilities.resume`). */
 export type SessionStart =
     | { kind: 'new'; cwd: string; mcpServers: McpServer[]; meta?: Record<string, unknown> }
     | { kind: 'resume'; sessionId: string; cwd: string; mcpServers: McpServer[] };
