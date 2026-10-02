@@ -64,24 +64,22 @@
         "smoke:opencode": "node scripts/smoke/smoke.ts opencode/openrouter/z-ai/glm-5.3-flash",
         "smoke:opencode-schema": "node scripts/smoke/smoke.ts opencode/openrouter/z-ai/glm-5.3-flash --schema"
     },
-    "dependencies": {
-        "@agentclientprotocol/sdk": "^1.5.0",
-        "@modelcontextprotocol/sdk": "^1.30.1",
-        "ajv": "^8.20.0",
-        "yaml": "^2.9.1",
-        "zod": "^4.6.5"
-    },
     "devDependencies": {
+        "@agentclientprotocol/sdk": "^1.5.0",
         "@changesets/changelog-github": "^1.0.1",
         "@changesets/cli": "^3.0.3",
         "@eslint/js": "^10.0.1",
+        "@modelcontextprotocol/sdk": "^1.30.1",
         "@types/node": "^24.19.0",
+        "ajv": "^8.20.0",
         "eslint": "^10.11.0",
         "lefthook": "^2.1.15",
         "prettier": "^3.9.9",
         "tsdown": "^0.23.0",
         "typescript": "^6.0.3",
         "typescript-eslint": "^8.71.0",
-        "vitest": "^5.0.3"
+        "vitest": "^5.0.3",
+        "yaml": "^2.9.1",
+        "zod": "^4.6.5"
     }
 }

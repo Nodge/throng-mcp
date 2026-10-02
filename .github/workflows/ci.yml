@@ -32,8 +32,9 @@ jobs:
               run: pnpm run ci:fmt
             - name: Build
               run: pnpm run ci:build
+            # Skipped for dependabot's own pushes; a maintainer commit on its PR (adding a changeset) runs it again.
             - name: Changesets
-              if: github.head_ref != 'changeset-release/main' && github.ref != 'refs/heads/changeset-release/main'
+              if: github.head_ref != 'changeset-release/main' && github.ref != 'refs/heads/changeset-release/main' && github.actor != 'dependabot[bot]'
               run: pnpm run ci:changesets
 
     test:

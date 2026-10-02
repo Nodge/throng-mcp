@@ -40,7 +40,7 @@ The npm package [`throng-mcp`](https://www.npmjs.com/package/throng-mcp). Needs 
 
 Two ways to run it:
 
-- `npx -y throng-mcp` straight in the client config, below. Nothing to install: npx fetches the package on the first start and caches it.
+- `npx -y throng-mcp` straight in the client config, below. Nothing to install: npx fetches the package on the first start and caches it. The package has no dependencies, so that is one tarball and nothing else.
 - A global install, then the command is `throng-mcp`. Starts faster than going through npx.
 
   ```bash

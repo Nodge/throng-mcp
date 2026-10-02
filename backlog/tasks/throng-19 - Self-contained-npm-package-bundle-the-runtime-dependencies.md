@@ -1,11 +1,11 @@
 ---
 id: THRONG-19
 title: 'Self-contained npm package: bundle the runtime dependencies'
-status: In Progress
+status: Done
 assignee:
   - '@fable'
 created_date: '2026-10-02 21:22'
-updated_date: '2026-10-02 21:22'
+updated_date: '2026-10-02 21:48'
 labels: []
 milestone: m-2
 dependencies: []
@@ -21,19 +21,19 @@ The published bin runs from a tsdown bundle, but the five runtime libraries stay
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The five runtime libraries are devDependencies; package.json has no dependencies or peerDependencies; pnpm build bundles them into dist/ (tsdown.config.ts says why)
-- [ ] #2 dist/THIRD_PARTY_LICENSES.md is generated at build from the modules that actually ended up in the bundle: name, version, SPDX id and the license text of every bundled package, sorted by name, deterministic
-- [ ] #3 scripts/pack.test.ts runs the unpacked tarball without any node_modules (symlink removed), asserts the tarball's package.json has no dependencies, and asserts dist/THIRD_PARTY_LICENSES.md is in the tarball and names @modelcontextprotocol/sdk and zod
-- [ ] #4 Dependabot covers npm (weekly, grouped into one PR, cooldown 7 days); pnpm-workspace.yaml sets minimumReleaseAge to 7 days; the CI Changesets step is skipped for dependabot's own pushes
-- [ ] #5 docs/DESIGN.md §9 and docs/development.md describe the self-contained package, the license file, and how a dependency bump reaches users (a patch changeset on the dependabot PR for bundled libs)
-- [ ] #6 pnpm typecheck, lint, test green; pnpm build output under 2 MB
+- [x] #1 The five runtime libraries are devDependencies; package.json has no dependencies or peerDependencies; pnpm build bundles them into dist/ (tsdown.config.ts says why)
+- [x] #2 dist/THIRD_PARTY_LICENSES.md is generated at build from the modules that actually ended up in the bundle: name, version, SPDX id and the license text of every bundled package, sorted by name, deterministic
+- [x] #3 scripts/pack.test.ts runs the unpacked tarball without any node_modules (symlink removed), asserts the tarball's package.json has no dependencies, and asserts dist/THIRD_PARTY_LICENSES.md is in the tarball and names @modelcontextprotocol/sdk and zod
+- [x] #4 Dependabot covers npm (weekly, grouped into one PR, cooldown 7 days); pnpm-workspace.yaml sets minimumReleaseAge to 7 days; the CI Changesets step is skipped for dependabot's own pushes
+- [x] #5 docs/DESIGN.md §9 and docs/development.md describe the self-contained package, the license file, and how a dependency bump reaches users (a patch changeset on the dependabot PR for bundled libs)
+- [x] #6 pnpm typecheck, lint, test green; pnpm build output under 2 MB
 <!-- AC:END -->
 
 ## Definition of Done
 <!-- DOD:BEGIN -->
-- [ ] #1 Went through the runbook-task-cycle; report spot-checked
-- [ ] #2 Gates green: pnpm typecheck && pnpm test
-- [ ] #3 DESIGN.md updated if an external contract (DESIGN §3) changed
+- [x] #1 Went through the runbook-task-cycle; report spot-checked
+- [x] #2 Gates green: pnpm typecheck && pnpm test
+- [x] #3 DESIGN.md updated if an external contract (DESIGN §3) changed
 - [ ] #4 Went through the runbook-task-cycle; report spot-checked
 - [ ] #5 Gates green: pnpm typecheck && pnpm lint && pnpm test
 - [ ] #6 Changeset written (minor)
@@ -95,3 +95,15 @@ The published bin runs from a tsdown bundle, but the five runtime libraries stay
 ## Verification the coder runs
 `pnpm install`, `pnpm build` (look at the size report and open `dist/THIRD_PARTY_LICENSES.md`), `pnpm typecheck && pnpm lint && pnpm test` (the pack test is part of `pnpm test`), then `pnpm build` twice and `cmp` the two license files for determinism. Also run the built bin once by hand: `(echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}'; sleep 1) | node dist/mcp.js` from a directory with no node_modules (e.g. copy `dist/` and `package.json` to a temp dir) and expect the `serverInfo` reply.
 <!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Runbook run .agent-runbooks/runs/20261002-throng-19: ready after one fix round. Reviews: Opus 2 findings, GPT 1 (duplicate). Fixed: a1, the coder had added trustLockfile: true to pnpm-workspace.yaml to get past the 48 already-locked versions younger than a week, which turns off pnpm's lockfile verification entirely; replaced by minimumReleaseAgeExclude with exact name@version entries, delete the list after 2026-10-08 (comment in the file). a2, the license plugin deduped by name@version so a package reached through two pnpm peer contexts gets one section. Bundled packages at this version: 10 (both SDKs, ajv, ajv-formats, fast-deep-equal, fast-uri, json-schema-traverse, yaml, zod, zod-to-json-schema); the express/hono side of the MCP SDK is tree-shaken out. Source maps left off on purpose (Node ignores them without --enable-source-maps; they would double the tarball). Evidence: pnpm typecheck, lint exit 0; pnpm test 268/268 incl. scripts/pack.test.ts which runs the unpacked tarball with no node_modules; dist 1.3 MB; license file deterministic across two builds (verify step).
+<!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Runtime libraries moved to devDependencies and bundled by tsdown into dist/ (1.3 MB); package.json ships with no dependencies. A rolldown plugin (scripts/build/third-party-licenses.ts) writes dist/THIRD_PARTY_LICENSES.md from the modules actually in the bundle, deduped and sorted. Pack test runs the unpacked tarball with no node_modules and checks the manifest, the license file and the size. Dependabot covers npm weekly, grouped, 7-day cooldown; pnpm minimumReleaseAge 7 days with a dated exclude list for the versions already locked; CI skips the Changesets check for dependabot's pushes. DESIGN §9, development.md and README updated. Verified: typecheck, lint, 268 tests green; changeset minor.
+<!-- SECTION:FINAL_SUMMARY:END -->
