@@ -142,6 +142,22 @@ describe('smoke script against the fake agent', () => {
         expect(tagAlive(tag), 'fake agent left running').toBe(false);
     });
 
+    it('--cancel: list shows running, cancel stops the turn, wait returns cancelled, list shows failed', async () => {
+        const { code, stdout, stderr, tag } = await smoke(['claude/fake-small', '--cancel'], 'hang');
+        expect(code, stdout + stderr).toBe(0);
+        expect(stdout).toMatch(/run_thronglet agent=claude\/fake-small .* background, then cancel$/m);
+        expect(stdout).toMatch(/PASS: run_thronglet background accepted/);
+        expect(stdout).toMatch(/PASS: list_thronglets shows the turn running/);
+        expect(stdout).toMatch(/PASS: cancel_thronglet cancelled the turn/);
+        expect(stdout).toMatch(/PASS: wait_thronglet returned cancelled/);
+        expect(stdout).toMatch(/PASS: list_thronglets shows the turn failed with cancelled/);
+        expect(stdout).toMatch(/pong\.txt and follow-up steps skipped \(--cancel\)/);
+        expect(stdout).not.toMatch(/\. send_message/);
+        expect(stdout).toMatch(/PASS: no orphans/);
+        expect(stdout).not.toMatch(/FAIL/);
+        expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
+
     it('--no-follow-up skips the send_message step', async () => {
         const { code, stdout, stderr, tag } = await smoke(
             ['claude/fake-small', '--prompt', 'x', '--no-follow-up'],

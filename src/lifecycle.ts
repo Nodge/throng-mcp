@@ -21,16 +21,21 @@ export class RunLifecycle {
     readonly #clientSignal: AbortSignal;
     readonly #stop = new AbortController();
     readonly #stopped: Promise<never>;
-    readonly #onClientAbort = () => this.#halt('cancelled', 'cancelled by the client');
+    readonly #cancelMessage: () => string;
+    readonly #onClientAbort = () => this.#halt('cancelled', this.#cancelMessage());
     #timer: NodeJS.Timeout | undefined;
     #release: (() => void) | undefined;
     #worker: Worker | undefined;
     /** A worker whose handshake outlived a cancel/timeout: closed when it arrives, holding the slot until then. */
     #lingering: Promise<void> | undefined;
 
-    /** `clientSignal` is the MCP call's `extra.signal`: client cancel or transport close. */
-    constructor(clientSignal: AbortSignal) {
+    /**
+     * `clientSignal` aborts the call: client cancel, transport close or cancel_thronglet. `cancelMessage` is the
+     * `cancelled` error's message at the moment it aborts.
+     */
+    constructor(clientSignal: AbortSignal, cancelMessage: () => string = () => 'cancelled by the client') {
         this.#clientSignal = clientSignal;
+        this.#cancelMessage = cancelMessage;
         // #halt is the only abort and always passes a ThrongError.
         this.#stopped = new Promise<never>((_, reject) =>
             this.#stop.signal.addEventListener('abort', () => reject(this.#stop.signal.reason as ThrongError))

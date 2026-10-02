@@ -29,13 +29,13 @@ export function startBackground(
     base: Omit<RunContext, 'signal' | 'progress' | 'onTurnStarted'>,
     opts: BackgroundOptions
 ): Promise<RunOutcome | { pending: TurnPending }> {
-    // After the acceptance only cancel_thronglet aborts it: cancelling the accepting call must not kill the turn.
+    // Aborted only by the accepting call's cancel before the acceptance: cancelling the call after it must not kill
+    // the turn. cancel_thronglet reaches the turn through runCall's own controller on the registry.
     const controller = new AbortController();
     const forward = opts.progress ?? noProgress;
     const clientSignal = opts.signal;
     const onClientAbort = () => controller.abort();
     let settled = false;
-    let detach: (() => void) | undefined;
     const settle = () => {
         settled = true;
         clientSignal?.removeEventListener('abort', onClientAbort);
@@ -48,12 +48,10 @@ export function startBackground(
         const accept = (sessionId: string, state: TurnPending['state']) => {
             if (settled) return;
             settle();
-            detach = base.sessions.attachTurn(sessionId, controller);
             resolve({ pending: { session_id: sessionId, state, queued: base.sessions.waiting(sessionId) } });
         };
         const finish = (outcome: RunOutcome) => {
             if (!settled) settle();
-            detach?.();
             resolve(outcome);
         };
         const { sessionId } = opts;

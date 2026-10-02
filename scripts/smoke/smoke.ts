@@ -8,17 +8,28 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { parseAgentSpec } from '../../src/agent-spec.ts';
-import type { ListHarnessesOutput, RunFailure, RunSuccess, TurnPending } from '../../src/contract.ts';
+import type {
+    CancelThrongletOutput,
+    ListHarnessesOutput,
+    ListThrongletsOutput,
+    RunFailure,
+    RunSuccess,
+    ThrongletInfo,
+    TurnPending,
+} from '../../src/contract.ts';
 
 // Manual smoke against a REAL harness (DESIGN §9): starts `node src/mcp.ts` with the user's own env, config and cache,
 // runs list_harnesses and one run_thronglet, checks the file the agent wrote, asks a send_message follow-up about it,
 // and checks that no adapter process is left. With --schema the run_thronglet step asks for structured output
 // (DESIGN §6) and checks `structured` as well. With --background both turns run with `background: true` (DESIGN §3.6):
 // the pending answer is printed and the result is collected with wait_thronglet, then checked the same way.
+// With --cancel the run goes to the background and is cancelled right away (DESIGN §3.7, §3.8): list_thronglets shows it
+// running, cancel_thronglet stops it, wait_thronglet returns `cancelled`, list_thronglets shows it failed; the pong.txt
+// and follow-up checks are skipped.
 // Spends tokens: run by hand, one harness at a time. Exit: 0 pass, 1 any FAIL or tool error, 2 usage/availability.
 
 const USAGE =
-    'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-follow-up] [--schema] [--background]';
+    'usage: node scripts/smoke/smoke.ts <harness>/<model>[:<effort>] [--prompt "<text>"] [--cwd <dir>] [--timeout <s>] [--no-follow-up] [--schema] [--background] [--cancel]';
 const DEFAULT_PROMPT =
     'Create a file named pong.txt in the current directory containing exactly the word pong (no newline needed), then reply with the single word: done.';
 const SCHEMA_PROMPT =
@@ -63,6 +74,7 @@ try {
             'no-follow-up': { type: 'boolean' },
             schema: { type: 'boolean' },
             background: { type: 'boolean' },
+            cancel: { type: 'boolean' },
         },
     });
 } catch (err) {
@@ -166,6 +178,84 @@ async function turn(name: string, args: Record<string, unknown>): Promise<Record
     );
 }
 
+/** The session's row in list_thronglets, printed. */
+async function listedRow(sessionId: string | undefined): Promise<ThrongletInfo | undefined> {
+    const listed = await client.callTool({ name: 'list_thronglets', arguments: {} }, CallToolResultSchema, {
+        timeout: 60_000,
+    });
+    const row = (JSON.parse(textOf(listed)) as Partial<ListThrongletsOutput>).thronglets?.find(
+        t => t.session_id === sessionId
+    );
+    console.log(`   row: ${JSON.stringify(row)}`);
+    return row;
+}
+
+/** --cancel: a background run_thronglet, then list, cancel, wait and list again. */
+async function cancelSteps(args: Record<string, unknown>): Promise<void> {
+    const accepted = await client.callTool(
+        { name: 'run_thronglet', arguments: { ...args, background: true } },
+        CallToolResultSchema,
+        { timeout: 300_000 }
+    );
+    if (accepted.isError === true) {
+        const { payload } = printResult(accepted);
+        fails.push(`run_thronglet failed with ${payload.code}`);
+        return;
+    }
+    console.log(`   pending: ${textOf(accepted)}`);
+    const pending = JSON.parse(textOf(accepted)) as Partial<TurnPending>;
+    const id = pending.session_id;
+    check(
+        typeof id === 'string' && pending.state === 'running',
+        'run_thronglet background accepted',
+        `run_thronglet background answered ${textOf(accepted).slice(0, 200)}, expected state running`
+    );
+
+    say('list_thronglets');
+    const running = await listedRow(id);
+    check(
+        running?.description === 'smoke: ping/pong' && running.state === 'running',
+        'list_thronglets shows the turn running',
+        `list_thronglets row is ${JSON.stringify(running)}, expected description "smoke: ping/pong", state running`
+    );
+
+    say(`cancel_thronglet session_id=${id}`);
+    const cancelled = await client.callTool(
+        { name: 'cancel_thronglet', arguments: { session_id: id } },
+        CallToolResultSchema,
+        { timeout: 120_000 }
+    );
+    console.log(`   ${cancelled.isError === true ? 'error: ' : ''}${textOf(cancelled)}`);
+    const out = JSON.parse(textOf(cancelled)) as Partial<CancelThrongletOutput>;
+    check(
+        cancelled.isError !== true && out.cancelled_turn === true,
+        'cancel_thronglet cancelled the turn',
+        `cancel_thronglet answered ${textOf(cancelled).slice(0, 200)}, expected cancelled_turn: true`
+    );
+
+    say(`wait_thronglet session_id=${id}`);
+    const waited = await client.callTool(
+        { name: 'wait_thronglet', arguments: { session_id: id, timeout_s: 60 } },
+        CallToolResultSchema,
+        { timeout: 120_000 }
+    );
+    const result = printResult(waited);
+    check(
+        result.isError && result.payload.code === 'cancelled',
+        'wait_thronglet returned cancelled',
+        `wait_thronglet returned ${result.isError ? result.payload.code : 'a success'}, expected the cancelled error`
+    );
+
+    say('list_thronglets');
+    const failed = await listedRow(id);
+    check(
+        failed?.state === 'failed' && failed.last_error?.code === 'cancelled',
+        'list_thronglets shows the turn failed with cancelled',
+        `list_thronglets row is ${JSON.stringify(failed)}, expected state failed, last_error.code cancelled`
+    );
+    console.log('   pong.txt and follow-up steps skipped (--cancel)');
+}
+
 function table(rows: string[][]): string {
     const widths = rows[0]?.map((_, i) => Math.max(...rows.map(r => (r[i] ?? '').length))) ?? [];
     return rows
@@ -242,13 +332,20 @@ try {
         for (const model of info.models.slice(0, 40)) console.log(`   ${model}`);
         if (info.models.length > 40) console.log(`   … ${info.models.length - 40} more`);
         exitCode = 2;
+    } else if (values.cancel === true) {
+        cwd = userCwd ?? mkdtempSync(join(tmpdir(), 'throng-smoke-'));
+        createdCwd = userCwd === undefined;
+        say(`run_thronglet agent=${agent} cwd=${cwd} timeout_s=${timeoutS} background, then cancel`);
+        await cancelSteps({
+            agent,
+            prompt: values.prompt ?? DEFAULT_PROMPT,
+            description: 'smoke: ping/pong',
+            cwd,
+            timeout_s: timeoutS,
+        });
     } else {
-        if (userCwd) {
-            cwd = userCwd;
-        } else {
-            cwd = mkdtempSync(join(tmpdir(), 'throng-smoke-'));
-            createdCwd = true;
-        }
+        cwd = userCwd ?? mkdtempSync(join(tmpdir(), 'throng-smoke-'));
+        createdCwd = userCwd === undefined;
         const withSchema = values.schema === true;
         say(
             `run_thronglet agent=${agent} cwd=${cwd} timeout_s=${timeoutS}${withSchema ? ' schema' : ''}${withBackground ? ' background' : ''}`

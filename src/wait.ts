@@ -2,13 +2,8 @@ import { ThrongError, type TurnPending } from './contract.ts';
 import type { Progress } from './progress.ts';
 import type { SessionRegistry } from './registry.ts';
 import type { RunOutcome } from './run.ts';
-import {
-    INTERRUPTED_MESSAGE,
-    loadSessionRecord,
-    markTurnInterrupted,
-    pidAlive,
-    type SessionRecord,
-} from './sessions.ts';
+import { resolveState } from './session-state.ts';
+import { loadSessionRecord, type SessionRecord } from './sessions.ts';
 
 // wait_thronglet (DESIGN §3.6): the last turn's outcome from the session record, once the session is idle.
 
@@ -32,7 +27,6 @@ export interface WaitDeps {
 const DEFAULT_POLL_MS = 1000;
 /** setTimeout fires at once above this. */
 const MAX_TIMER_MS = 2 ** 31 - 1;
-const UNRECORDED_MESSAGE = 'turn ended without recording its result';
 
 /**
  * Resolves with the last turn's outcome once no turn on the session runs or waits (in this process; a turn of another
@@ -65,33 +59,15 @@ export async function waitThronglet(input: WaitInput, deps: WaitDeps): Promise<R
             }
             // A turn of this process may have taken the session while the record was read.
             if (sessions.busy(id)) continue;
-            if (record.turn_started_at !== undefined) {
-                const pid = record.turn_pid;
-                if (pid !== process.pid && pidAlive(pid)) {
-                    if (!(await until(sleep(deps.pollMs ?? DEFAULT_POLL_MS), stop))) return pending();
-                    continue;
-                }
-                // Its process is gone, or it is ours and not busy: either way nobody will write the result.
-                const own = pid === process.pid;
-                const stale = own
-                    ? (r: SessionRecord) => r.turn_pid === process.pid && !sessions.busy(id)
-                    : (r: SessionRecord) => !pidAlive(r.turn_pid);
-                const message = own ? UNRECORDED_MESSAGE : INTERRUPTED_MESSAGE;
-                try {
-                    record = (await markTurnInterrupted(cacheDir, id, stale, message)) ?? record;
-                } catch (err) {
-                    const why = err instanceof Error ? err.message : String(err);
-                    return {
-                        ok: false,
-                        payload: {
-                            code: 'transport_lost',
-                            message: `${message} (record not updated: ${why})`,
-                            duration_s: 0,
-                        },
-                    };
-                }
-                if (record.turn_started_at !== undefined) continue;
+            const resolved = await resolveState(cacheDir, id, record, sessions);
+            if (resolved.failure) return { ok: false, payload: resolved.failure };
+            if (resolved.foreign !== undefined) {
+                if (!(await until(sleep(deps.pollMs ?? DEFAULT_POLL_MS), stop))) return pending();
+                continue;
             }
+            // Busy again, or the record went away: look again.
+            if (resolved.state === 'running' || resolved.state === 'queued' || !resolved.record) continue;
+            record = resolved.record;
             if (record.last_result) return { ok: true, payload: record.last_result };
             if (record.last_error) return { ok: false, payload: record.last_error };
             return {

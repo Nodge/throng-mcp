@@ -42,6 +42,32 @@ export interface TurnPending {
     queued: number;
 }
 
+/** One row of `list_thronglets` (DESIGN §3.7): the session record merged with this process's live state. */
+export interface ThrongletInfo {
+    session_id: string;
+    description: string;
+    /** Agent spec as §3.1 would spell it: `<harness>/<model>[:<effort>]`. */
+    agent: string;
+    cwd: string;
+    state: SessionState;
+    queued: number;
+    created_at: string;
+    last_used_at: string;
+    /** When `failed`. */
+    last_error?: { code: ErrorCode; message: string };
+}
+
+export interface ListThrongletsOutput {
+    thronglets: ThrongletInfo[];
+}
+
+/** `cancel_thronglet` (DESIGN §3.8): the session is idle again; `cancelled_turn` says whether anything was running or queued. */
+export interface CancelThrongletOutput {
+    session_id: string;
+    state: 'idle';
+    cancelled_turn: boolean;
+}
+
 export interface RunFailure {
     code: ErrorCode;
     message: string;

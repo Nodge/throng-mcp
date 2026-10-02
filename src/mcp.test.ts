@@ -9,7 +9,14 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import type { ListHarnessesOutput, RunFailure, RunSuccess, TurnPending } from './contract.ts';
+import type {
+    CancelThrongletOutput,
+    ListHarnessesOutput,
+    ListThrongletsOutput,
+    RunFailure,
+    RunSuccess,
+    TurnPending,
+} from './contract.ts';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), 'throng-mcp-'));
@@ -133,7 +140,14 @@ async function callListHarnesses(env: Record<string, string>): Promise<{ tools: 
 describe('mcp server over stdio', () => {
     it('without adapters on PATH: every harness unavailable with its install hint, default limits', async () => {
         const { tools, out } = await callListHarnesses(serverEnv({}));
-        expect(tools).toStrictEqual(['list_harnesses', 'run_thronglet', 'send_message', 'wait_thronglet']);
+        expect(tools).toStrictEqual([
+            'cancel_thronglet',
+            'list_harnesses',
+            'list_thronglets',
+            'run_thronglet',
+            'send_message',
+            'wait_thronglet',
+        ]);
         expect(out.harnesses).toStrictEqual([]);
         assertInstallHints(out.unavailable, ['claude', 'codex', 'opencode']);
         expect(out.limits).toStrictEqual({
@@ -489,6 +503,17 @@ describe('run_thronglet over stdio', () => {
             expect(payload.session_id).toBe(id);
             expect(payload.text?.startsWith('echo: '), payload.text).toBe(true);
             expect(tagAlive(first.tag)).toBe(false);
+
+            const listed = await first.client.callTool({ name: 'list_thronglets', arguments: {} });
+            expect(listed.isError).toBe(undefined);
+            const { thronglets } = payloadOf(listed) as ListThrongletsOutput;
+            expect(thronglets.find(t => t.session_id === id)).toMatchObject({
+                description: 'test',
+                agent: 'claude/fake-small',
+                cwd: repo,
+                state: 'idle',
+                queued: 0,
+            });
         } finally {
             await first.close();
         }
@@ -522,9 +547,61 @@ describe('run_thronglet over stdio', () => {
             const failure = payloadOf(waited) as RunFailure;
             expect(failure.code).toBe('transport_lost');
             expect(failure.message).toBe('turn interrupted: the throng server process that ran it is gone');
+
+            const listed = await second.client.callTool({ name: 'list_thronglets', arguments: {} });
+            const { thronglets } = payloadOf(listed) as ListThrongletsOutput;
+            expect(thronglets.find(t => t.session_id === id)).toMatchObject({
+                state: 'failed',
+                last_error: {
+                    code: 'transport_lost',
+                    message: 'turn interrupted: the throng server process that ran it is gone',
+                },
+            });
         } finally {
             await second.close();
         }
         await waitFor(() => !tagAlive(first.tag), 3000, 'the killed server left its adapter running');
+    });
+
+    it('list_thronglets shows a running background turn; cancel_thronglet stops it, wait_thronglet returns cancelled', async () => {
+        const cache = mkdtempSync(join(dir, 'cache-cancel-'));
+        const { client, tag, close } = await connect('hang', {}, cache);
+        try {
+            const started = await client.callTool({
+                name: 'run_thronglet',
+                arguments: {
+                    agent: 'claude/fake-small',
+                    prompt: 'hi',
+                    cwd: repo,
+                    description: 'cancel me',
+                    background: true,
+                },
+            });
+            const { session_id: id } = payloadOf(started) as TurnPending;
+            const listed = await client.callTool({ name: 'list_thronglets', arguments: {} });
+            expect(listed.isError).toBe(undefined);
+            expect((payloadOf(listed) as ListThrongletsOutput).thronglets).toMatchObject([
+                { session_id: id, description: 'cancel me', state: 'running', queued: 0 },
+            ]);
+
+            const cancelled = await client.callTool({ name: 'cancel_thronglet', arguments: { session_id: id } });
+            expect(cancelled.isError).toBe(undefined);
+            expect(payloadOf(cancelled) as CancelThrongletOutput).toStrictEqual({
+                session_id: id,
+                state: 'idle',
+                cancelled_turn: true,
+            });
+            expect(tagAlive(tag)).toBe(false);
+
+            const waited = await client.callTool({ name: 'wait_thronglet', arguments: { session_id: id } });
+            expect(waited.isError).toBe(true);
+            expect(payloadOf(waited)).toMatchObject({ code: 'cancelled', message: 'cancelled by cancel_thronglet' });
+
+            const unknown = await client.callTool({ name: 'cancel_thronglet', arguments: { session_id: 'fake-nope' } });
+            expect(unknown.isError).toBe(true);
+            expect(payloadOf(unknown)).toMatchObject({ code: 'session_not_found', duration_s: 0 });
+        } finally {
+            await close();
+        }
     });
 });

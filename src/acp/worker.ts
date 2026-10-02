@@ -23,7 +23,7 @@ import type {
 
 /** How much of the stderr tail goes into error messages; the full 64 KB stays behind `stderrTail()`. */
 const STDERR_IN_MESSAGE = 2048;
-const DEFAULT_EXIT_GRACE_MS = 5000;
+export const DEFAULT_EXIT_GRACE_MS = 5000;
 /**
  * How long to wait for the child's stdio to drain after it exited, and for its exit status after
  * the stream broke. Bounded because a descendant may keep the adapter's stdout open forever.

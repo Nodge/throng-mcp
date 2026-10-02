@@ -6,7 +6,9 @@ import type { SessionRegistry } from '../registry.ts';
 import type { Semaphore } from '../semaphore.ts';
 import { createProgress, type ProgressExtra } from './progress.ts';
 import { type ToolResult, toolResult } from './result.ts';
+import * as cancelThronglet from './tools/cancel-thronglet.ts';
 import * as listHarnesses from './tools/list-harnesses.ts';
+import * as listThronglets from './tools/list-thronglets.ts';
 import * as runThronglet from './tools/run-thronglet.ts';
 import * as sendMessage from './tools/send-message.ts';
 import * as waitThronglet from './tools/wait-thronglet.ts';
@@ -88,7 +90,9 @@ export function registerTools(server: McpServer, deps: ToolDeps): Tools {
         },
     };
 
-    for (const tool of [listHarnesses, runThronglet, sendMessage, waitThronglet]) tool.register(server, env);
+    for (const tool of [cancelThronglet, listHarnesses, listThronglets, runThronglet, sendMessage, waitThronglet]) {
+        tool.register(server, env);
+    }
 
     return {
         drain: async () => {

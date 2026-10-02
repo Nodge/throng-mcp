@@ -237,7 +237,7 @@ describe('startBackground', () => {
         expect(tagAlive(tag)).toBe(false);
     });
 
-    it("the detached controller on the registry (cancel_thronglet's hook) aborts the turn", async () => {
+    it("the turn's controller on the registry (cancel_thronglet's hook) aborts the turn", async () => {
         const { loaded, tag } = h.fakeClaude('hang');
         const base = h.makeCtx(loaded);
         const { track, tracked } = tracker();

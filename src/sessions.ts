@@ -180,7 +180,8 @@ export async function markInterrupted(dir: string): Promise<void> {
     }
 }
 
-async function listSessionIds(dir: string): Promise<string[]> {
+/** Ids of the session records on disk; `[]` when there are none or the directory is unreadable (logged). */
+export async function listSessionIds(dir: string): Promise<string[]> {
     try {
         const names = await readdir(join(dir, 'sessions'));
         return names.filter(name => name.endsWith('.json')).map(name => name.slice(0, -'.json'.length));

@@ -39,7 +39,7 @@ export interface RunContext {
     semaphore: Semaphore;
     /** One per process: the per-session turn queue (DESIGN §3.3). */
     sessions: SessionRegistry;
-    /** The MCP call's `extra.signal`: client cancel or transport close. */
+    /** The MCP call's `extra.signal` (client cancel or transport close), or a background turn's detached controller. */
     signal: AbortSignal;
     progress: Progress;
     /** Environment for the adapter PATH lookup; the server's own by default. */
@@ -56,8 +56,9 @@ export interface RunContext {
 
 export type RunOutcome = { ok: true; payload: RunSuccess } | { ok: false; payload: RunFailure };
 
-const DEFAULT_CANCEL_GRACE_MS = 5000;
+export const DEFAULT_CANCEL_GRACE_MS = 5000;
 const QUEUE_WARNING_MS = 1000;
+const CANCELLED_BY_TOOL = 'cancelled by cancel_thronglet';
 const MAX_CORRECTIVE_PROMPTS = 2;
 /** Stop reasons after which a missing or rejected structured result gets a corrective prompt (DESIGN §6). */
 const CORRECTABLE_STOPS: readonly string[] = ['end_turn', 'max_tokens', 'max_turn_requests'];
@@ -90,13 +91,20 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
 
     const warnings: string[] = [];
     const collector = new Collector();
-    const lifecycle = new RunLifecycle(ctx.signal);
+    // The turn's own controller on the session's registry entry: cancel_thronglet aborts it (DESIGN §3.8).
+    const cancel = new AbortController();
+    const signal = AbortSignal.any([ctx.signal, cancel.signal]);
+    const lifecycle = new RunLifecycle(signal, () =>
+        cancel.signal.aborted ? CANCELLED_BY_TOOL : 'cancelled by the client'
+    );
     let bridge: PermissionBridge | undefined;
     let sessionId: string | undefined;
     /** Releases the session's turn lock; given back once the adapter is gone and the record is updated. */
     let unlockSession: (() => void) | undefined;
     /** The session whose lock this call holds: only the holder writes the turn's fields into the record. */
     let lockedId: string | undefined;
+    /** Takes `cancel` off the session's registry entry; called once the outcome is fixed. */
+    let detachTurn: (() => void) | undefined;
     /** Mode requested by the permission policy; the agent may fall back to another one (claude: auto → acceptEdits). */
     let requestedMode: string | undefined;
     /** Temp dir of the structured-output run: schema.json and submit-tool's result.json. */
@@ -177,12 +185,16 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         // Queue wait (the session's own queue, then the semaphore) counts neither toward timeout_s nor toward
         // duration_s (DESIGN §7). Session lock first: a turn waiting for its session holds no slot.
         const onQueued = (behind: 'session' | 'slot') => (waiting: number) => ctx.progress.queued(waiting, behind);
+        // `acquire` creates the registry entry synchronously: `cancel` is on it before the call starts to wait.
+        const lockSession = async (id: string) => {
+            const acquiring = ctx.sessions.acquire(id, signal, onQueued('session'));
+            detachTurn = ctx.sessions.attachTurn(id, cancel);
+            unlockSession = await acquiring;
+            lockedId = id;
+        };
         const queuedAt = now();
         try {
-            if (request.kind === 'resume') {
-                unlockSession = await ctx.sessions.acquire(request.sessionId, ctx.signal, onQueued('session'));
-                lockedId = request.sessionId;
-            }
+            if (request.kind === 'resume') await lockSession(request.sessionId);
             await lifecycle.acquire(ctx.semaphore, onQueued('slot'));
         } finally {
             waitedMs = now() - queuedAt;
@@ -244,8 +256,7 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         if (request.kind === 'new') {
             // A brand-new id is never contended, but the lock is taken before the record exists: a send_message that
             // reads the record must queue behind this turn.
-            unlockSession = await ctx.sessions.acquire(sessionId, ctx.signal, onQueued('session'));
-            lockedId = sessionId;
+            await lockSession(sessionId);
             const createdAt = new Date(now()).toISOString();
             await writeSessionRecord(ctx.cacheDir, sessionId, {
                 harness: target.harness,
@@ -369,6 +380,12 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
         outcome = { ok: true, payload: await run() };
     } catch (err) {
         outcome = { ok: false, payload: failure(err) };
+    }
+    // The outcome is fixed here: from now on cancel_thronglet finds nothing to cancel. One that came after the last
+    // guard but before this point still wins, so its `cancelled_turn: true` and the recorded outcome agree.
+    detachTurn?.();
+    if (outcome.ok && cancel.signal.aborted) {
+        outcome = { ok: false, payload: failure(new ThrongError('cancelled', CANCELLED_BY_TOOL)) };
     }
 
     try {

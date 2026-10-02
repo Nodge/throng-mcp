@@ -820,8 +820,10 @@ describe('session queue', () => {
         const ctx = makeCtx(loaded, { sessions, signal: controller.signal });
         const running = runThronglet(input('claude/fake-small'), ctx);
         const dir = join(ctx.cacheDir, 'sessions');
-        await waitFor('session record', () => existsSync(dir) && readdirSync(dir).length > 0);
-        const id = readdirSync(dir)[0]?.replace(/\.json$/, '') ?? '';
+        // Not the atomic write's temp file (`<id>.json.<uuid>.tmp`): the record itself.
+        const recordName = () => (existsSync(dir) ? readdirSync(dir).find(name => name.endsWith('.json')) : undefined);
+        await waitFor('session record', () => recordName() !== undefined);
+        const id = recordName()?.replace(/\.json$/, '') ?? '';
         expect(sessions.busy(id), `${id} not busy`).toBe(true);
         controller.abort();
         const payload = failed(await running, 'cancelled');
@@ -939,5 +941,25 @@ describe('turn record', () => {
         const before = readFileSync(recordAt(ctx, 'fake-g'), 'utf8');
         failed(await sendMessage({ session_id: 'fake-g', prompt: 'x' }, ctx), 'spawn_failed');
         expect(readFileSync(recordAt(ctx, 'fake-g'), 'utf8')).toBe(before);
+    });
+
+    it('a synchronous turn cancelled through its registry controller: cancelled by cancel_thronglet, recorded, lock released', async () => {
+        const { loaded, tag } = fakeClaude('hang');
+        const sessions = new SessionRegistry();
+        const ctx = makeCtx(loaded, { sessions });
+        let id = '';
+        const running = runThronglet(input('claude/fake-small'), { ...ctx, onTurnStarted: sid => (id = sid) });
+        await waitFor('turn started', () => id !== '');
+        await waitFor('adapter', () => tagAlive(tag));
+        const turns = sessions.turns(id);
+        expect(turns.length).toBe(1);
+        turns[0]?.abort();
+        const payload = failed(await running, 'cancelled');
+        expect(payload.message).toBe('cancelled by cancel_thronglet');
+        expect(payload.session_id).toBe(id);
+        expect(readRecord(ctx, id).last_error?.code).toBe('cancelled');
+        expect(tagAlive(tag), 'adapter still running').toBe(false);
+        expect(sessions.busy(id), 'lock still held').toBe(false);
+        expect(sessions.turns(id)).toStrictEqual([]);
     });
 });

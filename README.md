@@ -1,6 +1,6 @@
 # throng
 
-An MCP server for delegating coding tasks to other agents. `run_thronglet` starts Claude Code, Codex or OpenCode over ACP (Agent Client Protocol) in the directory you give it, runs one prompt to completion and returns the agent's final message. `send_message` sends the next message into that session; with `background: true` either call returns at once and `wait_thronglet` collects the result. `list_harnesses` shows which harnesses are installed, with their models and effort levels. The nested agent edits the live tree at `cwd`: there is no sandbox, worktree or apply-back step. v1 runs every harness in its own auto-approve mode (`permissions: auto`); whatever that mode still asks about, throng refuses.
+An MCP server for delegating coding tasks to other agents. `run_thronglet` starts Claude Code, Codex or OpenCode over ACP (Agent Client Protocol) in the directory you give it, runs one prompt to completion and returns the agent's final message. `send_message` sends the next message into that session; with `background: true` either call returns at once and `wait_thronglet` collects the result. `list_thronglets` shows the sessions and what each is doing, `cancel_thronglet` stops a session's running turn. `list_harnesses` shows which harnesses are installed, with their models and effort levels. The nested agent edits the live tree at `cwd`: there is no sandbox, worktree or apply-back step. v1 runs every harness in its own auto-approve mode (`permissions: auto`); whatever that mode still asks about, throng refuses.
 
 ## Requirements
 
@@ -35,7 +35,7 @@ claude mcp add --scope user throng -- node /abs/path/to/throng-mcp/src/mcp.ts
 claude mcp list
 ```
 
-Tool names in Claude Code: `mcp__throng__run_thronglet`, `mcp__throng__send_message`, `mcp__throng__wait_thronglet`, `mcp__throng__list_harnesses`.
+Tool names in Claude Code: `mcp__throng__run_thronglet`, `mcp__throng__send_message`, `mcp__throng__wait_thronglet`, `mcp__throng__list_thronglets`, `mcp__throng__cancel_thronglet`, `mcp__throng__list_harnesses`.
 
 Check the setup: ask Claude to call `list_harnesses` (each installed adapter is started without a prompt, so it costs no tokens), or run `pnpm smoke claude/sonnet` from the repo (spends a few tokens, see [Smoke](#smoke-maintainer)).
 
@@ -162,6 +162,37 @@ Waits until the session has no running or queued turn, then returns the last tur
 
 The result lives in the session record, so `wait_thronglet` is idempotent and answers after a server restart. A turn running in another throng server (another Claude session, a nested agent) is polled through the record until it ends. A turn whose server died gets `transport_lost` ("turn interrupted: the throng server process that ran it is gone"), marked at the next server start or by `wait_thronglet` itself. Messages queued behind such a turn are lost: the queue lives in the server process.
 
+### `list_thronglets`
+
+No input. Every session record on this machine, most recently used first:
+
+```ts
+{
+  thronglets: Array<{
+    session_id: string;
+    description: string;   // from run_thronglet
+    agent: string;         // <harness>/<model>[:<effort>]
+    cwd: string;
+    state: 'running' | 'queued' | 'idle' | 'failed';
+    queued: number;        // messages waiting behind the running turn
+    created_at: string;
+    last_used_at: string;
+    last_error?: { code: string; message: string };   // when failed
+  }>;
+}
+```
+
+`running` / `queued` is this server's live state. A session whose turn runs in another throng server (another Claude session, a nested agent) shows as `running` from its record, with `queued: 0`: the queue of that server is not visible here. `failed` means the last turn ended with an error, `idle` that it succeeded or no turn has finished yet. A turn whose server died is never listed as `running`: it is marked `failed` with `transport_lost`, as described under `wait_thronglet`. A record that can't be read is skipped (logged).
+
+### `cancel_thronglet`
+
+```ts
+{ session_id: string }
+// → { session_id: string; state: 'idle'; cancelled_turn: boolean }
+```
+
+Cancels the session's running turn (ACP `session/cancel`, then the adapter is closed) and drops every message queued behind it, synchronous or background. The cancelled turn's error is `cancelled` ("cancelled by cancel_thronglet"); it becomes the session's last result, so a pending `wait_thronglet` returns it, and so do the queued calls (theirs say they were waiting for the running turn). Returns once the session is idle; it accepts a new `send_message` right away. On an idle session it is a no-op with `cancelled_turn: false`; the same for a turn that has already finished and is only closing its adapter: its result stands, and the call returns once the session is idle. Failures: `session_not_found` for an unknown id; `agent_error` when the turn runs in another throng server process (cancel it from the session that started it) or doesn't stop in time (the longer of `limits.handshake_s` and the 5 s cancel grace, plus 20 s: 80 s by default).
+
 ## Configuration
 
 Optional: `~/.config/throng/config.yaml`.
@@ -205,7 +236,7 @@ Auth: the nested harness uses whatever login its CLI has. If `claude auth status
 
 ## Files on disk
 
-- `~/.cache/throng/sessions/<session_id>.json`: one record per session (`harness, model, effort, cwd, description, created_at, last_used_at`), read by `send_message` and `wait_thronglet`. Every turn also writes `turn_started_at` and `turn_pid` (the server process running it) while it runs, then replaces them with `last_result` (the success payload) or `last_error` (the failure payload) and updates `last_used_at`. At start the server gives every record whose `turn_pid` is gone the interrupted `last_error`.
+- `~/.cache/throng/sessions/<session_id>.json`: one record per session (`harness, model, effort, cwd, description, created_at, last_used_at`), read by `send_message`, `wait_thronglet` and `list_thronglets`. Every turn also writes `turn_started_at` and `turn_pid` (the server process running it) while it runs, then replaces them with `last_result` (the success payload) or `last_error` (the failure payload) and updates `last_used_at`. At start the server gives every record whose `turn_pid` is gone the interrupted `last_error`.
 - Records are rotated at server start: files older than 14 days are deleted.
 - Server logs are short lines on stderr (start/stop, permission decisions, each run's outcome, errors); the MCP client decides where they end up.
 - throng keeps no transcripts: the harness logs every session itself, find it by `session_id`.
@@ -226,6 +257,7 @@ pnpm smoke:claude -- --prompt "…" --cwd /some/dir --timeout 600
 pnpm smoke:claude -- --no-follow-up                    # skip the send_message step
 pnpm smoke:claude -- --schema                          # run_thronglet with a schema {file, content}
 pnpm smoke:claude -- --background                      # both turns with background: true, results via wait_thronglet
+pnpm smoke:claude -- --cancel                          # background run, list_thronglets, cancel_thronglet, wait_thronglet
 ```
 
 The script starts the server, prints the `list_harnesses` table (versions, model counts, efforts, commands, unavailable reasons, limits), runs `run_thronglet` in a fresh temp dir asking the agent to write `pong.txt`, prints the payload, then checks:
@@ -234,6 +266,7 @@ The script starts the server, prints the `list_harnesses` table (versions, model
 - `PASS: structured is {file: pong.txt, content: pong}` / `FAIL: structured is …`: with `--schema` only; the run asks for the created file's name and content as structured output, and the payload's `structured` must match.
 - `PASS: send_message answered pong.txt` / `FAIL: send_message …`: a `send_message` into the same session asks which file it created; its payload is printed and the answer must mention `pong.txt`. Skipped when the run failed, or with `--no-follow-up` (e.g. with a custom `--prompt`).
 - `PASS: run_thronglet background accepted` / `PASS: send_message background accepted`: with `--background` only; the call answered `{session_id, state, queued}` (printed as `pending:`), and `wait_thronglet` then delivers the payload the checks above run on.
+- With `--cancel` instead of the pong.txt and follow-up checks: `PASS: run_thronglet background accepted`, `PASS: list_thronglets shows the turn running` (the row has description `smoke: ping/pong`), `PASS: cancel_thronglet cancelled the turn` (`cancelled_turn: true`), `PASS: wait_thronglet returned cancelled`, `PASS: list_thronglets shows the turn failed with cancelled`.
 - `PASS: no orphans` / `FAIL: orphaned adapter processes: <pids>`: no new `claude-agent-acp`, `codex-acp`, `opencode acp` or `submit-tool` process is alive 3 s after the client closed. `FAIL: cannot check orphans (…)` when `pgrep` is missing or fails.
 
 Exit code: 0 all passed; 1 a FAIL or a tool error; 2 bad usage, harness unavailable or unknown model (the valid models are printed). Server stderr is prefixed `[server]`, progress `[progress]`. The temp dir is removed on success and kept (path printed) on failure.

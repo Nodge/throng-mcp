@@ -8,7 +8,7 @@ interface Entry {
     users: number;
     /** `idle()` callers, resolved when the entry is dropped. */
     idle: (() => void)[];
-    /** Detached controllers of the background turns on this session (running or queued); for cancel_thronglet. */
+    /** Cancel controllers of the turns on this session, running or queued (runCall attaches them); for cancel_thronglet. */
     turns: Set<AbortController>;
 }
 
@@ -69,7 +69,7 @@ export class SessionRegistry {
         return new Promise(resolve => entry.idle.push(resolve));
     }
 
-    /** Registers a background turn's controller on a busy session; returns its detach. A no-op on an idle session. */
+    /** Registers a turn's cancel controller on a busy session; returns its detach. A no-op on an idle session. */
     attachTurn(sessionId: string, controller: AbortController): () => void {
         const entry = this.#entries.get(sessionId);
         if (!entry) return () => undefined;
@@ -77,7 +77,7 @@ export class SessionRegistry {
         return () => entry.turns.delete(controller);
     }
 
-    /** Controllers of the background turns attached to the session. */
+    /** Cancel controllers of the turns attached to the session. */
     turns(sessionId: string): AbortController[] {
         return [...(this.#entries.get(sessionId)?.turns ?? [])];
     }

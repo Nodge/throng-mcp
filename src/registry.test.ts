@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
+import { fakeHarness, tagAlive, waitFor } from '../test/fake-harness.ts';
 import { ThrongError } from './contract.ts';
+import { sendMessage } from './mcp/tools/send-message.ts';
 import { SessionRegistry } from './registry.ts';
+
+const h = fakeHarness('throng-registry-');
+afterAll(() => h.cleanup());
 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const never = new AbortController().signal;
@@ -100,5 +105,33 @@ describe('SessionRegistry', () => {
         expect(registry.turns('s')).toStrictEqual([second]);
         release();
         expect(registry.turns('s')).toStrictEqual([]);
+    });
+
+    it("turns(): runCall's controllers of a running synchronous turn and a queued one; aborting them ends both", async () => {
+        const hang = h.fakeClaude('hang');
+        const echo = h.fakeClaude('echo');
+        const sessions = new SessionRegistry();
+        const aCtx = h.makeCtx(hang.loaded, { sessions });
+        await h.record(aCtx.cacheDir, 'fake-t');
+        const a = sendMessage({ session_id: 'fake-t', prompt: 'A' }, aCtx);
+        await waitFor('A holds the session', () => sessions.busy('fake-t'));
+        expect(sessions.turns('fake-t').length).toBe(1);
+        await waitFor('A adapter', () => tagAlive(hang.tag));
+        const b = sendMessage(
+            { session_id: 'fake-t', prompt: 'B' },
+            h.makeCtx(echo.loaded, { sessions, cacheDir: aCtx.cacheDir })
+        );
+        await waitFor('B queued', () => sessions.waiting('fake-t') === 1);
+        const turns = sessions.turns('fake-t');
+        expect(turns.length).toBe(2);
+
+        for (const controller of turns) controller.abort();
+        const [aOut, bOut] = await Promise.all([a, b]);
+        expect(aOut.ok ? 'ok' : aOut.payload.code).toBe('cancelled');
+        expect(bOut.ok ? 'ok' : bOut.payload.code).toBe('cancelled');
+        await sessions.idle('fake-t');
+        expect(sessions.turns('fake-t')).toStrictEqual([]);
+        expect(tagAlive(hang.tag)).toBe(false);
+        expect(tagAlive(echo.tag), 'the queued turn never started an adapter').toBe(false);
     });
 });
