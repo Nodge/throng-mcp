@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@fable'
 created_date: '2026-10-02 21:22'
-updated_date: '2026-10-02 21:48'
+updated_date: '2026-10-02 22:07'
 labels: []
 milestone: m-2
 dependencies: []
@@ -100,6 +100,8 @@ The published bin runs from a tsdown bundle, but the five runtime libraries stay
 
 <!-- SECTION:NOTES:BEGIN -->
 Runbook run .agent-runbooks/runs/20261002-throng-19: ready after one fix round. Reviews: Opus 2 findings, GPT 1 (duplicate). Fixed: a1, the coder had added trustLockfile: true to pnpm-workspace.yaml to get past the 48 already-locked versions younger than a week, which turns off pnpm's lockfile verification entirely; replaced by minimumReleaseAgeExclude with exact name@version entries, delete the list after 2026-10-08 (comment in the file). a2, the license plugin deduped by name@version so a package reached through two pnpm peer contexts gets one section. Bundled packages at this version: 10 (both SDKs, ajv, ajv-formats, fast-deep-equal, fast-uri, json-schema-traverse, yaml, zod, zod-to-json-schema); the express/hono side of the MCP SDK is tree-shaken out. Source maps left off on purpose (Node ignores them without --enable-source-maps; they would double the tarball). Evidence: pnpm typecheck, lint exit 0; pnpm test 268/268 incl. scripts/pack.test.ts which runs the unpacked tarball with no node_modules; dist 1.3 MB; license file deterministic across two builds (verify step).
+
+Follow-up (nodge): the 48-entry minimumReleaseAgeExclude list is gone. Instead the four direct devDependencies whose range floor was younger than a week were lowered (lefthook ^2.1.14, typescript-eslint ^8.70.1, vitest ^5.0.2, @types/node ^24.13.6) and the lockfile rebuilt from a fresh resolution (pnpm clean --lockfile; pnpm install): every version now clears the 7-day policy on its own. Downgrades: rolldown 1.2.12→1.2.11, vitest 5.0.3→5.0.2, typescript-eslint 8.71→8.70.1, lefthook 2.1.15→2.1.14, @types/node 24.19→24.13.6; dependabot brings them back after the cooldown. Gates green on the new tree: typecheck, lint, 268 tests; pnpm install --frozen-lockfile passes.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
