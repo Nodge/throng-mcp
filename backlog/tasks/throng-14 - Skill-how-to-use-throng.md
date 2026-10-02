@@ -1,11 +1,11 @@
 ---
 id: THRONG-14
 title: 'Skill: how to use throng'
-status: Review
+status: Done
 assignee:
   - '@nodge'
 created_date: '2026-10-02 11:08'
-updated_date: '2026-10-02 12:26'
+updated_date: '2026-10-02 15:52'
 labels: []
 milestone: m-1
 dependencies:
@@ -30,7 +30,7 @@ Tool descriptions say what each tool does, not how to work with thronglets as a 
 - [x] #2 The skill covers: choosing an agent spec (`list_harnesses`), foreground vs background turns and `wait_thronglet`, multi-turn work with `send_message` and the queue, `steer` and its cost, `list_thronglets`/`cancel_thronglet`, structured output, permission policies
 - [x] #3 Every tool name, parameter and error code in the skill matches DESIGN §3 at the time of writing; the skill does not duplicate tool descriptions verbatim, it links patterns to them
 - [x] #4 README gives the maintainer the command to install the skill into user scope; the task itself does not touch `~/.claude`
-- [ ] #5 Checked in a real session: a fresh Claude Code session with the skill installed picks it up on a delegation request and makes a correct background run + wait + follow-up `send_message`
+- [x] #5 Checked in a real session: a fresh Claude Code session with the skill installed picks it up on a delegation request and makes a correct background run + wait + follow-up `send_message`
 - [x] #6 The skill states what the prompt of a thronglet must contain: it is self-contained, the thronglet has no access to the caller's conversation
 <!-- AC:END -->
 
@@ -97,10 +97,12 @@ Report in `summary`: every wording change to the skill and why (contract fact or
 
 <!-- SECTION:NOTES:BEGIN -->
 Dependency on THRONG-8 waived by the maintainer: the skill describes permissions per DESIGN §5 and says that today only auto runs (other policies fail with harness_unavailable). THRONG-8 must update the Permissions paragraph of skills/throng/SKILL.md when it lands (note added to THRONG-8). task-cycle wf_9afcc1af-eb7 on the main session draft: Opus coder verified every claim against DESIGN §3, tool schemas and README and tightened the text per writing-for-agents (changes listed in its report: description pointer regrouped, model list and tool-description restatements removed, depth_exceeded/timeout/transport_lost advice corrected to the implemented behavior, cwd no-sandbox gotcha added); gates green (248 tests). Reviews: Opus 3 findings, Codex 0. Confirmed and fixed (verified by a separate Opus): f1 the skill claimed background returns "running or queued" for run_thronglet while a slot wait blocks the call; f3 the permissions paragraph implied a wider policy could be configured today. Deferred f2 applied by the main session: mkdir -p before ln -s in the README install command. Staleness guard src/skill.test.ts: error codes in the skill table ⊆ ERROR_CODES (now a runtime const in contract.ts), every tool-shaped identifier ∈ TOOL_NAMES (exported from src/mcp/tools.ts; tool modules export their name) and all six tools mentioned, frontmatter name/description, README install command path. Known DESIGN/code gap reported by the coder: DESIGN §3.2 stop_reason lists refusal, the code reports refusal as an error (README and skill follow the code). AC #5 (fresh session with the skill installed runs background + wait + follow-up) is the maintainer`s after install.
+
+2026-10-02: nodge accepted the smoke (AC #5) as passed; any bugs will be filed separately.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-skills/throng/SKILL.md: model-invoked skill (65 lines) covering agent spec and list_harnesses, the self-contained prompt and cwd as the live tree, send_message conversations and the queue, steer and its cost, background + wait_thronglet and the fan-out pattern, list/cancel housekeeping, structured output, permissions (auto only today), and an error-code table with what to do. README ## Skill with the user-scope install command. src/skill.test.ts guards tool names and error codes against the code (TOOL_NAMES, ERROR_CODES). Verified: tsc 0, eslint 0, vitest 248/248. Pending: maintainer install + fresh-session check (AC #5) — status Review.
+skills/throng/SKILL.md: model-invoked skill (65 lines) covering agent spec and list_harnesses, the self-contained prompt and cwd as the live tree, send_message conversations and the queue, steer and its cost, background + wait_thronglet and the fan-out pattern, list/cancel housekeeping, structured output, permissions (auto only today), and an error-code table with what to do. README ## Skill with the user-scope install command. src/skill.test.ts guards tool names and error codes against the code (TOOL_NAMES, ERROR_CODES). Verified: tsc 0, eslint 0, vitest 248/248. Maintainer smoke (AC #5) accepted by nodge on 2026-10-02 without a recorded run; bugs come as separate tasks.
 <!-- SECTION:FINAL_SUMMARY:END -->

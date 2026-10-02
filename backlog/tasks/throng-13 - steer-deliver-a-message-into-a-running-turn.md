@@ -1,11 +1,11 @@
 ---
 id: THRONG-13
 title: 'steer: deliver a message into a running turn'
-status: Review
+status: Done
 assignee:
   - '@nodge'
 created_date: '2026-10-02 09:53'
-updated_date: '2026-10-02 12:15'
+updated_date: '2026-10-02 15:52'
 labels: []
 milestone: m-1
 dependencies:
@@ -32,7 +32,7 @@ Scope: DESIGN §3.3 as updated by decision-6.
 - [x] #2 The cancelled turn is recorded with the `cancelled` failure payload; the steered turn`s result becomes the session`s last result
 - [x] #3 `steer` on an idle session behaves exactly like `send_message` without it
 - [x] #4 fake-agent test: a long turn is steered; the agent`s next reply reflects the steer message, the queued message runs after it
-- [ ] #5 Smoke: steer a running thronglet on claude, codex and opencode; the reply acknowledges the interrupted work
+- [x] #5 Smoke: steer a running thronglet on claude, codex and opencode; the reply acknowledges the interrupted work
 <!-- AC:END -->
 
 ## Definition of Done
@@ -106,10 +106,12 @@ Report in `summary`: the registry API after the change, exactly where the holder
 task-cycle wf_4a884afd-91a: Opus coder, gates green (244 tests), Opus review 3 minor findings, Codex review 1 ("major", triaged as message-only); all four deferred by triage. Applied by the main session afterwards: (f3) steer does not abort the holder when the steer call itself is already cancelled; (f4) a cancel_thronglet / steer abort names itself in the cancelled payload whichever wait it interrupted (the slot-wait message is replaced; cancel.test expectation updated); (f1) fake steer scenario checks signal.aborted before attaching its abort listener; (f2) two steers in a row run newest first, written into DESIGN §3.3. Coder deviations accepted: registry acquire takes an options object with the controller, holder/waiters tracked explicitly, attachTurn removed; onQueued reports position 1 for a front acquire; smoke --steer STEERED check passes on the fake because the reply repeats the prompt (a real harness repeating the prompt would pass too). Spot-checked by the main session: run.ts (holder abort right before lockSession with front, reason-aware cancel message), registry.ts. Gates after the fixes: tsc 0, eslint 0, vitest 23 files / 244 tests.
 
 Smoke 2026-10-02 (maintainer): pnpm smoke:claude -- --steer — background run (sleep 60 prompt) accepted, send_message steer: the running turn ended cancelled in 0.6 s, the steer turn answered in 3.9 s: "STEERED running `sleep 60` before writing pong.txt with \"pong\"." (the agent remembers the interrupted work), list_thronglets shows idle; no orphans. SMOKE PASSED on claude/sonnet; codex and opencode pending for AC #5.
+
+2026-10-02: nodge accepted the smoke (AC #5) as passed; any bugs will be filed separately.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-steer: true on send_message aborts the session lock holder with reason "cancelled by steer" and takes the lock at the head of the queue (Semaphore front acquire); queued messages keep their place and run after; on an idle session identical to a plain send_message; with background it is accepted as queued. Registry now tracks holder and ordered waiters (holder(), turns(), detachTurn()). Fake-agent scenario steer (first turn hangs, later turns echo all prompts). Verified: tsc 0, eslint 0, vitest 244/244 incl. steer.test a–e (cancelled turn recorded, steer text, queue order, background acceptance, cancel after steer), stdio steer test, smoke --steer against the fake agent. Pending: maintainer smoke (AC #5) — status Review.
+steer: true on send_message aborts the session lock holder with reason "cancelled by steer" and takes the lock at the head of the queue (Semaphore front acquire); queued messages keep their place and run after; on an idle session identical to a plain send_message; with background it is accepted as queued. Registry now tracks holder and ordered waiters (holder(), turns(), detachTurn()). Fake-agent scenario steer (first turn hangs, later turns echo all prompts). Verified: tsc 0, eslint 0, vitest 244/244 incl. steer.test a–e (cancelled turn recorded, steer text, queue order, background acceptance, cancel after steer), stdio steer test, smoke --steer against the fake agent. Maintainer smoke (AC #5) accepted by nodge on 2026-10-02 without a recorded run; bugs come as separate tasks.
 <!-- SECTION:FINAL_SUMMARY:END -->

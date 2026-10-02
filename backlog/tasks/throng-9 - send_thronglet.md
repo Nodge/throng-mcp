@@ -1,11 +1,11 @@
 ---
 id: THRONG-9
 title: send_message with a per-session turn queue replaces resume_thronglet
-status: Review
+status: Done
 assignee:
   - '@nodge'
 created_date: '2026-09-28 15:33'
-updated_date: '2026-10-02 12:14'
+updated_date: '2026-10-02 15:52'
 labels: []
 milestone: m-1
 dependencies:
@@ -34,7 +34,7 @@ Scope: DESIGN §3.2, §3.3, §4, §8 as updated by decision-6. README and the sm
 - [x] #2 `send_message({session_id, prompt, schema?, timeout_s?})` runs the next turn of the session synchronously and returns the `run_thronglet` payload; unknown id or a harness without `sessionCapabilities.resume` → `session_not_found`
 - [x] #3 Two `send_message` calls on one session run one after the other, never two adapter processes on one session at a time; the second call waits in the queue and reports it in progress; covered by a fake-agent test
 - [x] #4 `resume_thronglet` is gone from the tool list, README, DESIGN and the smoke script; `send_message` takes its place in all of them
-- [ ] #5 Smoke: `run_thronglet` then `send_message` on claude, codex and opencode; the second turn sees the first
+- [x] #5 Smoke: `run_thronglet` then `send_message` on claude, codex and opencode; the second turn sees the first
 <!-- AC:END -->
 
 ## Definition of Done
@@ -114,10 +114,12 @@ Steer = `session/cancel` then prompt B: works on all three. A resolves `cancelle
 task-cycle wf_29fa48f5-bcd: Opus coder, gates green (189 tests), Opus review 0 findings, Codex review 1 finding (f1, major: the queue timeout test asserted a `queued N s` warning with a 28-41 ms margin over QUEUE_WARNING_MS) → confirmed, fixed (A holds the session with timeout_s: 2, margin ~1 s), verified by a separate Opus. Spot-checked by the main session: src/registry.ts (SessionRegistry: Semaphore(1) per id, users count, entry dropped at zero, acquire rejects `cancelled` with its own message), run.ts lock sites (send_message: after guards, before the semaphore, inside the queued window; run_thronglet: right after sessionId is known, before writeSessionRecord), release via the new RunLifecycle.whenGone after close + touch. Coder deviations accepted: old-record fallback (description "") lives in readSessionRecord; Semaphore got an optional cancel message; lock taken after guards so a failing call never queues; shutdown path (queued call wins the lock during shutdown → startWorker refuses with cancelled) not covered by a test. Gates re-run by the main session: tsc 0, eslint 0, vitest 18 files / 189 tests.
 
 Smoke 2026-10-02 (maintainer): pnpm smoke:claude — claude/sonnet run 4.7 s → "done", pong.txt written, send_message 2.4 s → "pong.txt", no orphans. SMOKE PASSED. AC #5 still needs codex and opencode.
+
+2026-10-02: nodge accepted the smoke (AC #5) as passed; any bugs will be filed separately.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-run_thronglet requires description (stored in the session record); send_message replaces resume_thronglet everywhere (tools, README, smoke with --no-follow-up, comments); per-session FIFO turn queue in src/registry.ts shared through RunContext.sessions, wait excluded from timeout_s/duration_s and reported as queued in progress; FAKE_TURN_MS knob in the fake agent. Verified: tsc 0, eslint 0, vitest 189/189 incl. queue tests (hang+timeout ordering, echo with FAKE_TURN_MS, abort while queued, new session busy while running, cancel during handshake keeps the lock). Pending: maintainer smoke (AC #5) on claude/codex/opencode — status Review.
+run_thronglet requires description (stored in the session record); send_message replaces resume_thronglet everywhere (tools, README, smoke with --no-follow-up, comments); per-session FIFO turn queue in src/registry.ts shared through RunContext.sessions, wait excluded from timeout_s/duration_s and reported as queued in progress; FAKE_TURN_MS knob in the fake agent. Verified: tsc 0, eslint 0, vitest 189/189 incl. queue tests (hang+timeout ordering, echo with FAKE_TURN_MS, abort while queued, new session busy while running, cancel during handshake keeps the lock). Maintainer smoke (AC #5) : claude run recorded, codex and opencode accepted by nodge on 2026-10-02 without a recorded run; bugs come as separate tasks.
 <!-- SECTION:FINAL_SUMMARY:END -->

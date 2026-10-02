@@ -1,11 +1,11 @@
 ---
 id: THRONG-12
 title: list_thronglets and cancel_thronglet
-status: Review
+status: Done
 assignee:
   - '@nodge'
 created_date: '2026-10-02 09:53'
-updated_date: '2026-10-02 12:15'
+updated_date: '2026-10-02 15:52'
 labels: []
 milestone: m-1
 dependencies:
@@ -35,7 +35,7 @@ Scope: DESIGN §3 (two tools), §8 as updated by decision-6.
 - [x] #3 `cancel_thronglet` on a running session cancels the turn and drops the queue; a pending `wait_thronglet` returns the `cancelled` failure payload; the session accepts a new `send_message` afterwards
 - [x] #4 `cancel_thronglet` on an idle session succeeds without side effects; unknown id → `session_not_found`
 - [x] #5 fake-agent tests cover list states across running/queued/idle/failed and cancel with a pending wait
-- [ ] #6 Smoke: list shows a running background thronglet with its description; cancel stops it on claude, codex and opencode
+- [x] #6 Smoke: list shows a running background thronglet with its description; cancel stops it on claude, codex and opencode
 <!-- AC:END -->
 
 ## Definition of Done
@@ -121,10 +121,12 @@ Report in `summary`: how the cancel reaches synchronous turns and queued waiters
 task-cycle wf_bed15720-4b6: Opus coder, gates green (232 tests), Opus review 2 findings, Codex review 1. Confirmed and fixed (verified by a separate Opus): f3 (Codex, major) a cancel arriving during the holder teardown (after the outcome was fixed, before the lock release) reported cancelled_turn: true while the record kept last_result → runCall detaches its controller the moment the outcome is fixed, cancel returns cancelled_turn: false when no controller is left, and a cancel that aborted before the outcome was fixed overrides an ok outcome with cancelled so reply and record agree; f1 (Opus, minor) stop bound ignored a lingering handshake → bound = max(handshake_s, cancelGrace) + 3×exitGrace + 5 s (80 s with defaults). Deferred minor: a send_message that joins the queue after cancel took its snapshot of controllers is not aborted and cancel waits for it (a race the caller creates by sending concurrently with its own cancel; whether such messages should be dropped is a design question). Coder deviations accepted: 3×exitGrace in the bound (worker close waits exitGrace three times); a new session between handshake and record write is not listed; smoke --cancel skips the pong.txt check and always runs in background; run.test "new session is busy" hardened to wait for a .json file (an atomic-write temp file was the likely flake). Spot-checked by the main session: src/run.ts (cancel controller + AbortSignal.any, lockSession attaches before awaiting acquire, detach at outcome), src/cancel.ts, src/session-state.ts (shared resolver for wait/list/cancel). Gates re-run: tsc 0, eslint 0, vitest 22 files / 232 tests.
 
 Smoke 2026-10-02 (maintainer): pnpm smoke:claude -- --cancel — background run accepted, list_thronglets shows the row running with description "smoke: ping/pong", cancel_thronglet → cancelled_turn: true (turn ended cancelled in 0.6 s), wait_thronglet → cancelled "cancelled by cancel_thronglet", list shows failed with last_error cancelled; no orphans. SMOKE PASSED on claude/sonnet; codex and opencode pending for AC #6.
+
+2026-10-02: nodge accepted the smoke (AC #6) as passed; any bugs will be filed separately.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-list_thronglets (src/list-thronglets.ts) merges session records with the live registry through the shared resolver src/session-state.ts: running | queued | idle | failed, queue length, agent spec, last_error, dead-owner turns marked transport_lost while listing; cancel_thronglet (src/cancel.ts) aborts the registry controllers of the running turn and queued waiters, waits for idle within a bound derived from handshake/cancel/exit graces, no-op on idle, agent_error for a turn owned by another live throng process. Every turn (sync, background, queued) now registers its own AbortController in the registry and detaches it once its outcome is fixed. Verified: tsc 0, eslint 0, vitest 232/232 incl. list states, cancel with pending wait, cancel during teardown, SIGKILL restart listed as failed over stdio, smoke --cancel against the fake agent. Pending: maintainer smoke (AC #6) — status Review.
+list_thronglets (src/list-thronglets.ts) merges session records with the live registry through the shared resolver src/session-state.ts: running | queued | idle | failed, queue length, agent spec, last_error, dead-owner turns marked transport_lost while listing; cancel_thronglet (src/cancel.ts) aborts the registry controllers of the running turn and queued waiters, waits for idle within a bound derived from handshake/cancel/exit graces, no-op on idle, agent_error for a turn owned by another live throng process. Every turn (sync, background, queued) now registers its own AbortController in the registry and detaches it once its outcome is fixed. Verified: tsc 0, eslint 0, vitest 232/232 incl. list states, cancel with pending wait, cancel during teardown, SIGKILL restart listed as failed over stdio, smoke --cancel against the fake agent. Maintainer smoke (AC #6) accepted by nodge on 2026-10-02 without a recorded run; bugs come as separate tasks.
 <!-- SECTION:FINAL_SUMMARY:END -->
