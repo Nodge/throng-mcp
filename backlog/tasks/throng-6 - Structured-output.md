@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@nodge'
 created_date: '2026-09-27 18:56'
-updated_date: '2026-10-01 21:59'
+updated_date: '2026-10-02 08:15'
 labels: []
 milestone: m-1
 dependencies:
@@ -112,6 +112,8 @@ Gates: `pnpm typecheck && pnpm lint && pnpm test`.
 task-cycle wf_218a5f9d-a43: Opus coder, gates green (173 tests), Opus review 3 findings → 1 confirmed (f3, minor: submit_result without result; resolved as a pinning test — zod 4 already requires the key), 2 rejected. Codex review did not reach triage again (this session's throng server predates structured), but its text named a real major bug: Ajv2020 + draft-07 meta schema rejects draft-07 tuples (items: [...]) — reproduced, fixed by the main session: compileSchema picks Ajv2020 when $schema says 2020-12, draft-07 Ajv otherwise (also without $schema); test added, DESIGN §6 updated. Coder deviations accepted: cancel test waits for the session record instead of a 200 ms timer (flaky under load); validateFormats:false + dataVar 'result'; SubmitState type in validate.ts; FAKE_SUBMIT knob and a narrower submit-tool orphan pattern in smoke; a refusal/cancelled stop wins over a valid submission; claude allowedTools for submit_result only on session/new (resume sends no _meta — known gap). Gates after the fix: tsc 0, eslint 0, vitest 17 files / 173 tests. Smoke codex+schema (AC #4) is the maintainer's: pnpm smoke:codex-schema.
 
 Smoke 2026-10-01 (maintainer): pnpm smoke:codex-schema — codex/gpt-6-luna run 27.6 s, submit_result called once, structured {file: pong.txt, content: pong}, pong.txt written, resume 7.9 s → 'pong.txt', no orphans. SMOKE PASSED. AC #4 checked, task Done.
+
+Sherpa review 2026-10-02 (maintainer), commit 2acc7e7: schema moved from the prompt into submit_result's inputSchema (low-level MCP Server, defs hoisted, ajv still the only validator so invalid/missing stays); submit_result answered allow_once under every policy in permissions.ts, claude allowedTools _meta removed; smoke:claude-schema and smoke:opencode-schema added; claude smoke on sonnet. Gates: tsc 0, eslint 0, vitest 180/180. Schema smoke on real harnesses not re-run after these changes.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
