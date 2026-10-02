@@ -1,11 +1,11 @@
 ---
 id: THRONG-15
 title: Prepare the repository for publishing on GitHub
-status: To Do
+status: In Progress
 assignee:
   - '@nodge'
 created_date: '2026-10-02 16:18'
-updated_date: '2026-10-02 16:20'
+updated_date: '2026-10-02 17:50'
 labels: []
 milestone: m-1
 dependencies:
@@ -19,25 +19,17 @@ ordinal: 15000
 <!-- SECTION:DESCRIPTION:BEGIN -->
 The repo goes public on GitHub. Two things are needed: release hygiene found by an audit on 2026-10-02 (tracked files + full history: no secrets, no internal references, no Cyrillic; only the items below), and a README that serves users, with the technical material moved to separate documents.
 
-Decisions already made by the maintainer: commit author email stays as is (no history rewrite); `backlog/` is published as part of the project, so its contents must read fine for an outsider; stage tags are not required. License: MIT unless the maintainer says otherwise.
+Decisions already made by the maintainer: commit author email stays as is (no history rewrite); `backlog/` is published as part of the project, so its contents must read fine for an outsider; stage tags are not required. License: MIT. Repository URL: https://github.com/Nodge/throng-mcp. The skill is installed with the skills CLI (`npx skills add Nodge/throng-mcp --skill throng -g`), not a symlink.
 
 Hygiene findings:
-- No `LICENSE` file; `package.json` has no `license`, `description`, `repository`. (`bin` / npx distribution is out of scope.)
+- No `LICENSE` file; `package.json` has no `license`, `description`, `repository`. (`bin` / npx distribution of the server is out of scope.)
 - `README.md` Install says `git clone <this repo>`; needs the real GitHub URL.
 - The no-sandbox / auto-approve default is one sentence in the README intro; a public MCP server that spawns agents with bypass permissions needs a visible Security block near the top: no isolation, what the default policy refuses, how to switch policy.
-- Absolute path `/Users/nodge/Sites/throng-mcp` in backlog/tasks throng-9, 11, 12, 13, 14 (notes, ~line 50 each); replace with a relative path or `<repo>`.
-- `backlog/tasks/throng-6` line ~116 mentions "Sherpa review" (the maintainer private tool); reword so an outsider understands it was a manual maintainer review.
+- The absolute path of the maintainer home-directory checkout in the notes of backlog/tasks throng-9, 11, 12, 13, 14; and "Sherpa review" (the maintainer private tool) in throng-6. Both scrubbed by the maintainer by hand before the run.
 - `data/registry.json` provenance (registry URL + snapshot date) lives only in DESIGN §4.1; the maintainer docs need one line with it.
 - `scripts/spike/concurrent-prompt.ts` is a committed spike: delete it, or keep with a one-line pointer in DESIGN.md to the finding it produced.
 
-README restructure. Today README.md (320 lines) serves three audiences at once: a user installing throng and calling it from Claude Code, an agent/developer needing exact tool contracts, and the maintainer (smoke matrix, development). README should serve the first audience only. Proposal for the cut (the worker decides the final shape):
-- Stay in README, trimmed to what a user needs: intro, Security, Requirements, Install, Skill, Agent spec, one worked example instead of per-tool TypeScript shapes, Configuration, Permissions, Troubleshooting, links to the other docs.
-- Per-tool contracts (`run_thronglet`, `send_message`, Background turns, `list_thronglets`, `cancel_thronglet`: input and result shapes, error code table, stop reasons): one canonical place. DESIGN §3 already holds the contract; either it is the reference and README links there, or a new `docs/` reference becomes canonical and DESIGN §3 points to it. No third copy.
-- Files on disk, Smoke (maintainer), Development: a maintainer document under `docs/`.
-- `skills/throng/SKILL.md` already covers calling-agent patterns; README links it, not restates it.
-Moved content is moved, not duplicated; all links between README, skill, DESIGN and the new docs must resolve.
-
-Backlog files are edited via the `backlog` CLI only (AGENTS.md).
+README restructure. Today README.md (320 lines) serves three audiences at once: a user installing throng and calling it from Claude Code, an agent/developer needing exact tool contracts, and the maintainer (smoke matrix, development). README should serve the first audience only. Decision: docs/DESIGN.md §3 stays the one canonical contract, README links to it; Files on disk, Smoke and Development move to docs/development.md; `skills/throng/SKILL.md` is linked, not restated.
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
@@ -50,10 +42,10 @@ Backlog files are edited via the `backlog` CLI only (AGENTS.md).
 - [ ] #6 Smoke, Files on disk and Development live in a maintainer document under docs/, linked from README; it names the ACP registry URL and the snapshot date of data/registry.json
 - [ ] #7 Every relative link in README, docs/ and skills/throng/SKILL.md resolves to an existing file or anchor
 - [ ] #8 A user can go from a fresh clone to a successful list_harnesses call using README alone
-- [ ] #9 No absolute path under /Users in any tracked file (`git grep -n /Users/` is empty)
-- [ ] #10 backlog/tasks/throng-6 no longer references Sherpa by name; the note reads as a maintainer review
-- [ ] #11 scripts/spike/ is either removed or referenced from DESIGN.md with the finding it produced
-- [ ] #12 Gates green: pnpm typecheck && pnpm lint && pnpm test
+- [ ] #9 backlog/tasks/throng-6 no longer references Sherpa by name; the note reads as a maintainer review
+- [ ] #10 scripts/spike/ is either removed or referenced from DESIGN.md with the finding it produced
+- [ ] #11 Gates green: pnpm typecheck && pnpm lint && pnpm test
+- [ ] #12 No absolute home-directory path in any tracked file (a grep for the macOS home prefix over tracked files is empty)
 <!-- AC:END -->
 
 ## Definition of Done
@@ -62,3 +54,65 @@ Backlog files are edited via the `backlog` CLI only (AGENTS.md).
 - [ ] #2 Gates green: pnpm typecheck && pnpm test
 - [ ] #3 DESIGN.md updated if an external contract (DESIGN §3) changed
 <!-- DOD:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+# THRONG-15: prepare the repository for publishing on GitHub
+
+Repository URL (assumed, not yet published): https://github.com/Nodge/throng-mcp. Owner: Nodge. The project: `throng`, an MCP server that runs Claude Code, Codex and OpenCode over ACP and returns the nested agent's result; see README.md, docs/DESIGN.md, AGENTS.md.
+
+Out of scope, do not touch: `backlog/` (already scrubbed by the maintainer), `src/`, `test/`, `scripts/smoke/`, `skills/throng/SKILL.md` (link it, don't edit it), the content of the contracts in docs/DESIGN.md §3 (you may add facts that README documented and §3 lacks, see 2c, and link lines). No npm `bin`/npx distribution of the server.
+
+## 1. License and package metadata
+
+- `LICENSE` at the repo root: MIT, "Copyright (c) 2026 Maksim Zemskov".
+- `package.json`: add `"license": "MIT"`, `"description": "MCP server that delegates coding tasks to Claude Code, Codex and OpenCode over ACP"`, `"repository": { "type": "git", "url": "git+https://github.com/Nodge/throng-mcp.git" }`. Keep `"private": true`.
+
+## 2. README.md for users only
+
+Today README.md (320 lines) mixes three audiences. After the task it serves a user who wants to install throng and call it from Claude Code. Target order of sections:
+
+1. Intro: what throng is and what the tools do, one paragraph (keep the current one, trimmed).
+2. **Security** (new, right after the intro): there is no sandbox, worktree or isolation: the nested agent edits the live tree at `cwd`; every harness runs in its own auto-approve mode and the default policy `auto` refuses whatever that mode still asks about; the other policies are `allow_all`, `deny_all`, `elicit` (a dialog in the client); run throng only on trees you would let an agent edit; link to Permissions.
+3. Requirements (as is).
+4. Install: server via `git clone https://github.com/Nodge/throng-mcp` (no `<this repo>` placeholder anywhere), adapters, `claude mcp add` as today. Skill: replace the `mkdir -p ~/.claude/skills && ln -s ...` command with the skills CLI (vercel-labs/skills): `npx skills add Nodge/throng-mcp --skill throng -g -a claude-code` (`-g` = user scope; omit `-g` for the current project only). Keep the notes that throng itself never touches `~/.claude` and that Claude Code picks skills up at session start.
+5. Agent spec: keep, but do not enumerate the harnesses' current model lists (they go stale; codex now offers gpt-6.1-sol, gpt-6-astra, gpt-6-sol, gpt-6-luna, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.5 and efforts low..max plus ultra): say the model must be one the harness offers, `list_harnesses` lists them, one example per harness.
+6. One worked example: a `run_thronglet` call (agent, prompt, cwd, description) and what comes back (session_id, text, stop_reason, usage), then one `send_message` follow-up. Prose plus one short JSON each; no TypeScript shapes.
+7. Configuration and Permissions: keep (they are what a user needs), trim repetition.
+8. Troubleshooting: keep.
+9. Links: `docs/DESIGN.md#3-external-contract` for exact tool contracts, `docs/development.md` for maintainers, `skills/throng/SKILL.md` for the calling agent's patterns.
+
+2a. Move out of README the per-tool TypeScript shapes and tables: `run_thronglet`, `send_message`, Background turns and `wait_thronglet`, `list_thronglets`, `cancel_thronglet`, the error-code table, stop reasons. The canonical contract is docs/DESIGN.md §3 "External contract"; README links there instead of restating. One place only: no new reference document for contracts.
+
+2b. Move "Files on disk", "Smoke (maintainer)" and "Development" to a new `docs/development.md` (maintainer document). Its "Files on disk" part also names `data/registry.json` as a verbatim snapshot of the ACP registry, URL https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json, snapshot date 2026-09-27 (DESIGN §2.2 / §4.1). Moved content is moved, not duplicated.
+
+2c. Before deleting a README passage, check that DESIGN §3 states the same fact (field, error code, behaviour such as queueing, steer, background semantics). A fact README had and §3 lacks is added to §3 in its style (a documentation sync, not a contract change). List every such addition in impl.md.
+
+## 3. scripts/spike/concurrent-prompt.ts
+
+Delete the file. Check docs/DESIGN.md for the finding it produced (concurrent prompts on one ACP session; grep DESIGN for "spike" and "concurrent"); if DESIGN already records the fact, nothing more; if not, add one sentence where the fact belongs (§2.3 adapters or §4) saying it was verified by a spike on 2026-09-27.
+
+## 4. Links
+
+Every relative link in README.md, docs/DESIGN.md, docs/development.md and skills/throng/SKILL.md resolves to an existing file and, when it has a fragment, an existing heading (GitHub anchors: lowercase, spaces to `-`, punctuation dropped). Check with a small script or by hand; put the list of checked links in impl.md.
+
+## 5. Checks and style
+
+`pnpm typecheck && pnpm lint && pnpm test` green (deleting the spike must not break lint). Prettier ignores `*.md`: match the existing README style by hand (ATX headers, fenced blocks with language tags, tables, backticked identifiers). The Russian/English rule: everything in English.
+
+## Acceptance criteria (verbatim)
+
+1. LICENSE file exists at the repo root and `package.json` has a matching `license` field, plus `description` and `repository`.
+2. README has the real repository URL in Install; no `<this repo>` placeholder anywhere.
+3. README has a Security section right after the intro stating no sandbox/isolation, the default permission policy and how to change it.
+4. README covers only user-facing content: what it is, requirements, install, skill setup, agent spec, one worked example, configuration, permissions, troubleshooting, links to the other docs.
+5. Tool contracts (inputs, results, error codes, stop reasons) live in exactly one place; README and DESIGN §3 link to it rather than restating it.
+6. Smoke, Files on disk and Development live in a maintainer document under docs/, linked from README; it names the ACP registry URL and the snapshot date of data/registry.json.
+7. Every relative link in README, docs/ and skills/throng/SKILL.md resolves to an existing file or anchor.
+8. A user can go from a fresh clone to a successful list_harnesses call using README alone.
+9. No absolute home-directory path in any tracked file (a grep for the macOS home prefix over tracked files is empty).
+10. (done by the maintainer) backlog/tasks/throng-6 no longer references Sherpa by name.
+11. scripts/spike/ is either removed or referenced from DESIGN.md with the finding it produced.
+12. Gates green: pnpm typecheck && pnpm lint && pnpm test.
+<!-- SECTION:PLAN:END -->

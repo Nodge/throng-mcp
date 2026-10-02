@@ -46,7 +46,7 @@ Tool descriptions say what each tool does, not how to work with thronglets as a 
 <!-- SECTION:PLAN:BEGIN -->
 # THRONG-14 — Skill: how to use throng
 
-Repo: /Users/nodge/Sites/throng-mcp, branch v2. Gates: `pnpm typecheck && pnpm lint && pnpm test`. Don't touch `backlog/`, don't commit, don't edit `docs/DESIGN.md` or `src/contract.ts`. Nothing under `~/.claude` is touched by this task: README tells the maintainer the command.
+Repo: the project directory, branch v2. Gates: `pnpm typecheck && pnpm lint && pnpm test`. Don't touch `backlog/`, don't commit, don't edit `docs/DESIGN.md` or `src/contract.ts`. Nothing under `~/.claude` is touched by this task: README tells the maintainer the command.
 
 This is a documentation task. The skill draft already exists at `skills/throng/SKILL.md`, written by the main session. Your job: verify it against the contract, tighten it, add a staleness guard test, and document installation. Keep the draft's structure and voice; change wording where a rule below or a contract fact demands it, and report every change in `summary`.
 
