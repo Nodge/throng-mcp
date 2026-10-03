@@ -1,5 +1,21 @@
 # throng-mcp
 
+## 0.4.0
+
+### Minor Changes
+
+- [`2ead051`](https://github.com/agent-runbooks/throng-mcp/commit/2ead0514c0aa957262f290fcf5b75bc0e678b770) Thanks [@Nodge](https://github.com/Nodge)! - Gemini CLI as a harness: `gemini/<model>` runs through Gemini CLI's own ACP mode (`gemini --acp`), with the Google-account login of the installed CLI. `list_harnesses` shows its models. Limits: a gemini session is one turn (`send_message` fails with `session_not_found`, Gemini CLI can't resume a session), there are no effort levels and no usage numbers, and the run's `cwd` is trusted (`GEMINI_CLI_TRUST_WORKSPACE=true`).
+
+- [`780ae7f`](https://github.com/agent-runbooks/throng-mcp/commit/780ae7fd05e079795ad9042f356b748fe10abd06) Thanks [@Nodge](https://github.com/Nodge)! - `send_message` to a session whose harness can't resume (Gemini CLI) is refused with `session_not_found` before anything runs: no adapter process is started, and `steer: true` no longer cancels the running turn first. The session record remembers what the adapter advertised when the session was created; sessions created by an earlier version fail at the next turn's handshake as before. `list_thronglets` shows such a session with the new field `accepts_messages: false`.
+
+### Patch Changes
+
+- [`c8b4a01`](https://github.com/agent-runbooks/throng-mcp/commit/c8b4a0107f95eb0e3adfe3c2a215a2edfa79d270) Thanks [@Nodge](https://github.com/Nodge)! - The `agent` parameter description and the docs no longer show `claude/opus[1m]` as an example: the claude adapter stopped offering that value.
+
+- [`1eb5d4d`](https://github.com/agent-runbooks/throng-mcp/commit/1eb5d4d24cfed04fe48ff19bd23f0797bc9a3010) Thanks [@Nodge](https://github.com/Nodge)! - A harness definition can now express the permission policy through `session/set_config_option` and extra launch args, next to the session mode and env. The built-in harnesses (claude, codex, opencode) behave as before; this prepares agents such as Copilot CLI and Cursor that switch auto-approval this way.
+
+- [`b7463d7`](https://github.com/agent-runbooks/throng-mcp/commit/b7463d729ee6c4be5cf97126bee89cabc874d03c) Thanks [@Nodge](https://github.com/Nodge)! - The repository moved to github.com/agent-runbooks/throng-mcp. The npm package name and the tools are the same.
+
 ## 0.3.0
 
 ### Minor Changes
