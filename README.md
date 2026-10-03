@@ -110,7 +110,7 @@ npm i -g @google/gemini-cli
 gemini
 ```
 
-Run `gemini` once and sign in; the nested agent uses that login. Limits:
+Run `gemini` once and sign in; the nested agent uses that login. Checked against Gemini CLI 0.61.0 only up to the first model request (handshake, models, modes); a full turn has not been run yet, so expect rough edges and please report them. Limits:
 
 - One turn per session: Gemini CLI can't resume a session, so `send_message` to it fails with `session_not_found`. With `steer: true` it cancels the running turn first and then fails the same way; to stop a gemini turn, use `cancel_thronglet` and start a new run.
 - No effort levels: a `:<effort>` suffix is ignored with a warning.
