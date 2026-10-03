@@ -13,3 +13,10 @@ updates:
               patterns: ['*']
       cooldown:
           default-days: 7
+      ignore:
+          # 7.x is the native compiler package; typescript-eslint doesn't support it yet (DESIGN §9).
+          - dependency-name: typescript
+            update-types: ['version-update:semver-major']
+          # Types follow the lowest supported Node major (engines.node).
+          - dependency-name: '@types/node'
+            update-types: ['version-update:semver-major']
