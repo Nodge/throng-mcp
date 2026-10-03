@@ -1,6 +1,6 @@
 # Common
 
-Repository: `<repo>`, the throng-mcp project: an MCP server that runs coding harnesses over ACP, one pnpm package, TypeScript run as `node src/mcp.ts` with no build step. Its rules are in `<repo>/AGENTS.md`, the design in `<repo>/docs/DESIGN.md`. The task brief is `<run>/brief.md`. In short:
+Repository: `<repo>`, the throng-mcp project: an MCP server that runs agent harnesses over ACP, one pnpm package, TypeScript run as `node src/mcp.ts` with no build step. Its rules are in `<repo>/AGENTS.md`, the design in `<repo>/docs/DESIGN.md`. The task brief is `<run>/brief.md`. In short:
 
 - Version control is `git`. Nothing is committed by a step.
 - Only erasable TypeScript syntax, imports with `.ts`. Tests are vitest next to the code (`src/foo.test.ts` for `src/foo.ts`) and never call an LLM: everything goes through `test/fake-agent`. Real harnesses only in `scripts/smoke/`, run by hand.

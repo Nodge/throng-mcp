@@ -1,11 +1,11 @@
 ---
 name: throng
-description: "Delegating work to another coding harness or model through throng (run_thronglet, send_message, wait_thronglet, list_thronglets, cancel_thronglet, list_harnesses). Use before any throng tool call, when a task should run on another model (codex, opus, gpt, glm) or get its review or opinion, and when running agents in parallel or in the background."
+description: "Delegating work to another agent harness or model through throng (run_thronglet, send_message, wait_thronglet, list_thronglets, cancel_thronglet, list_harnesses). Use before any throng tool call, when a task should run on another model (codex, opus, gpt, glm) or get its review or opinion, and when running agents in parallel or in the background."
 ---
 
 # Working with thronglets
 
-A **thronglet** is a nested session of a coding harness (Claude Code, Codex, OpenCode) that throng starts for you. It works in a directory you name, and its final message comes back as the result. It sees nothing of your conversation: no files you read, no decisions you made, no user messages. Everything it needs travels in the prompt.
+A **thronglet** is a nested session of an agent harness that throng starts for you. It works in a directory you name, and its final message comes back as the result. It sees nothing of your conversation: no files you read, no decisions you made, no user messages. Everything it needs travels in the prompt.
 
 ## Choosing the agent
 

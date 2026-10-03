@@ -1,6 +1,6 @@
 # throng-mcp — development rules
 
-Project: MCP server `throng` that runs coding harnesses (Claude Code, Codex, OpenCode) over ACP and returns their result to the calling session. Source of truth: `docs/DESIGN.md`. Tasks, milestones and decisions: Backlog.md in `backlog/` (CLI rules at the end of this file).
+Project: MCP server `throng` that runs agent harnesses over ACP and returns their result to the calling session. Source of truth: `docs/DESIGN.md`. Tasks, milestones and decisions: Backlog.md in `backlog/` (CLI rules at the end of this file).
 
 ## Session ritual
 

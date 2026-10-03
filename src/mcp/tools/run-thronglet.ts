@@ -82,7 +82,7 @@ export function register(server: McpServer, env: ToolEnv): void {
         name,
         {
             description:
-                'Runs a coding agent (Claude Code, Codex, OpenCode) on a task in cwd and returns its final message as JSON ' +
+                'Runs an agent of an installed harness (see list_harnesses) on a task in cwd and returns its final message as JSON ' +
                 '{session_id, text, stop_reason, usage, duration_s, warnings?}; with schema, structured replaces text. ' +
                 'description names the thronglet for listings. ' +
                 BACKGROUND_NOTE,

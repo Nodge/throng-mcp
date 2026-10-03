@@ -1,7 +1,7 @@
 {
     "name": "throng-mcp",
     "version": "0.2.0",
-    "description": "MCP server that delegates coding tasks to Claude Code, Codex and OpenCode over ACP",
+    "description": "MCP server that delegates work to another agent harness or model over ACP",
     "license": "MIT",
     "author": "Maksim Zemskov <maxaz74@gmail.com>",
     "keywords": [

@@ -2,7 +2,7 @@
 
 [![skills.sh](https://skills.sh/b/nodge/throng-mcp)](https://skills.sh/nodge/throng-mcp/throng)
 
-An MCP server that lets your coding agent hand work to another one. Any MCP client can call it, and the task goes to any supported harness.
+An MCP server that lets your agent hand work to another one. Any MCP client can call it, and the task goes to any supported harness.
 
 - **Another model's view.** A review by another vendor's model, a design critique, a cheaper model for a mechanical pass.
 - **Second opinions.** Hand one agent's result to another: Codex reviews, Claude fixes, Codex checks again, each in its own long-lived session.
@@ -33,6 +33,18 @@ Any of these calls takes `background: true`: it returns at once and `wait_throng
 ## Install
 
 Three parts, in order: the server, the agents it may run, and the client it is called from. The skill at the end is optional.
+
+<details>
+<summary><strong>Claude Code: the plugin, server and skill in one go</strong></summary>
+
+The plugin covers parts 1, 3 and 4; the agents from part 2 you still install yourself.
+
+```bash
+claude plugin marketplace add Nodge/throng-mcp
+claude plugin install throng@throng-mcp
+```
+
+</details>
 
 ### 1. The server
 

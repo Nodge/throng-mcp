@@ -1,0 +1,18 @@
+{
+    "name": "throng",
+    "description": "Delegate work to another agent harness or model over ACP: the throng MCP server plus the skill that teaches the calling agent to use it.",
+    "author": {
+        "name": "Maksim Zemskov",
+        "email": "maxaz74@gmail.com"
+    },
+    "homepage": "https://github.com/Nodge/throng-mcp#readme",
+    "repository": "https://github.com/Nodge/throng-mcp",
+    "license": "MIT",
+    "keywords": ["mcp", "acp", "delegation", "subagents", "codex", "opencode"],
+    "mcpServers": {
+        "throng": {
+            "command": "npx",
+            "args": ["-y", "throng-mcp@latest"]
+        }
+    }
+}
