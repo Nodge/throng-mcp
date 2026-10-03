@@ -1,6 +1,6 @@
 # throng-mcp
 
-[![skills.sh](https://skills.sh/b/nodge/throng-mcp)](https://skills.sh/nodge/throng-mcp/throng)
+[![skills.sh](https://skills.sh/b/agent-runbooks/throng-mcp)](https://skills.sh/agent-runbooks/throng-mcp/throng)
 
 An MCP server that lets your agent hand work to another one. Any MCP client can call it, and the task goes to any supported harness.
 
@@ -40,7 +40,7 @@ Three parts, in order: the server, the agents it may run, and the client it is c
 The plugin covers parts 1, 3 and 4; the agents from part 2 you still install yourself.
 
 ```bash
-claude plugin marketplace add Nodge/throng-mcp
+claude plugin marketplace add agent-runbooks/throng-mcp
 claude plugin install throng@throng-mcp
 ```
 
@@ -172,7 +172,7 @@ Any other MCP client: register a stdio server with that command.
 <summary><strong>skills CLI: Claude Code, Codex, opencode and others</strong></summary>
 
 ```bash
-npx skills add Nodge/throng-mcp --skill throng -g -a claude-code -y
+npx skills add agent-runbooks/throng-mcp --skill throng -g -a claude-code -y
 ```
 
 `-g` installs into the agent's user directory, for every project; without it, into the current project. `-a codex` or `-a opencode` for the other agents. `npx skills update` pulls later changes.
@@ -253,7 +253,7 @@ throng never answers "always allow", so no rule gets written into the agent's pr
 - [DESIGN §3](docs/DESIGN.md#3-external-contract): the exact inputs, results, error codes and stop reasons of every tool.
 - [skills/throng/SKILL.md](skills/throng/SKILL.md): working patterns for the calling agent.
 - [docs/development.md](docs/development.md): for maintainers; tests, smoke runs against real harnesses, files on disk.
-- [Nodge/skills](https://github.com/Nodge/skills): runbooks, multi-step procedures a session runs through subagents. Any step of a runbook can go to any harness through throng.
+- [Agent Runbooks](https://github.com/agent-runbooks/skills): multi-step procedures a session runs through subagents. Any step of a runbook can go to any harness through throng.
 
 ## License
 

@@ -16,13 +16,13 @@
         "subagents",
         "delegation"
     ],
-    "homepage": "https://github.com/Nodge/throng-mcp#readme",
+    "homepage": "https://github.com/agent-runbooks/throng-mcp#readme",
     "bugs": {
-        "url": "https://github.com/Nodge/throng-mcp/issues"
+        "url": "https://github.com/agent-runbooks/throng-mcp/issues"
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/Nodge/throng-mcp.git"
+        "url": "git+https://github.com/agent-runbooks/throng-mcp.git"
     },
     "type": "module",
     "bin": {

@@ -1,6 +1,6 @@
 {
     "$schema": "https://unpkg.com/@changesets/config@4.0.1/schema.json",
-    "changelog": ["@changesets/changelog-github", { "repo": "Nodge/throng-mcp" }],
+    "changelog": ["@changesets/changelog-github", { "repo": "agent-runbooks/throng-mcp" }],
     "commit": false,
     "fixed": [],
     "linked": [],

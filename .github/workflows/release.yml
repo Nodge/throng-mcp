@@ -10,7 +10,7 @@ jobs:
     release:
         name: Release
         # prevents this action from running on forks
-        if: github.repository == 'Nodge/throng-mcp'
+        if: github.repository == 'agent-runbooks/throng-mcp'
         permissions:
             contents: write # to create release
             issues: write # to post issue comments
