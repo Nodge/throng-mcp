@@ -39,7 +39,7 @@ const inputSchema = {
     agent: z
         .string()
         .describe(
-            '<harness>/<model>[:<effort>], e.g. claude/opus[1m]:max, codex/gpt-6-sol:xhigh; valid values: list_harnesses'
+            '<harness>/<model>[:<effort>], e.g. claude/opus:max, codex/gpt-6-sol:xhigh; valid values: list_harnesses'
         ),
     prompt: z.string().describe('Task for the agent'),
     cwd: z

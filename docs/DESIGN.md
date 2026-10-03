@@ -76,7 +76,7 @@ Consequence: wrapper subagents that shell out to a nested harness CLI aren't nee
 
 One string names harness, model and effort: `<harness>/<model>[:<effort>]`.
 
-- `claude/opus[1m]`, `claude/opus[1m]:max`, `codex/gpt-6-sol:xhigh`, `opencode/openrouter/moonshotai/kimi-k3:high`, `gemini/gemini-2.5-pro`.
+- `claude/opus`, `claude/opus:max`, `codex/gpt-6-sol:xhigh`, `opencode/openrouter/moonshotai/kimi-k3:high`, `gemini/gemini-2.5-pro`.
 - First path segment is the harness; the rest up to the last `:` is the model as the harness understands it (for opencode that's already `provider/model`).
 - The `:<effort>` suffix is recognized only when it's one of `low | medium | high | xhigh | max`, so model names with their own `:tag` survive.
 

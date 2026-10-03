@@ -199,7 +199,7 @@ Before the first run, two things to know. The agent edits the directory you name
 `agent` names harness, model and effort in one string, `<harness>/<model>[:<effort>]`:
 
 ```
-claude/opus[1m]:max
+claude/opus:max
 codex/gpt-6-sol:xhigh
 opencode/openrouter/z-ai/glm-5.3-flash
 gemini/gemini-2.5-pro

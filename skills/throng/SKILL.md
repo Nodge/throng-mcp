@@ -9,7 +9,7 @@ A **thronglet** is a nested session of an agent harness that throng starts for y
 
 ## Choosing the agent
 
-`agent` is one string: `<harness>/<model>[:<effort>]`, e.g. `claude/opus[1m]:high`, `codex/gpt-6-sol:xhigh`, `opencode/openrouter/z-ai/glm-5.3-flash`, `gemini/gemini-2.5-pro`. The model is a value the harness itself offers: `list_harnesses` returns them with the effort levels (it probes the adapters: seconds, no tokens), and a `model_rejected` message lists them too. Effort is `low | medium | high | xhigh | max`; omitted means the harness default.
+`agent` is one string: `<harness>/<model>[:<effort>]`, e.g. `claude/opus:high`, `codex/gpt-6-sol:xhigh`, `opencode/openrouter/z-ai/glm-5.3-flash`, `gemini/gemini-2.5-pro`. The model is a value the harness itself offers: `list_harnesses` returns them with the effort levels (it probes the adapters: seconds, no tokens), and a `model_rejected` message lists them too. Effort is `low | medium | high | xhigh | max`; omitted means the harness default.
 
 Pick another harness or model when the task gains from a different model's view (a second review, a design critique) or when the user names one. Same-vendor subagents of your own harness stay the cheaper default for plain parallel work.
 
