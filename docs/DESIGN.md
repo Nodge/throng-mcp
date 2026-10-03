@@ -168,7 +168,7 @@ output: {
     harness: 'claude' | 'codex' | 'opencode' | 'gemini';
     command: string[];       // what will actually be launched
     version?: string;        // adapter's initialize.agentInfo.version: adapters are user-installed, versions drift
-    models: string[];        // config option category 'model'; without one, the session's `models` list (gemini)
+    models: string[];
     efforts: string[];       // config option category 'thought_level'; empty when the harness has none
   }>;
   unavailable: Array<{ harness: string; reason: string }>;   // adapter not found + install command, config error, probe failed
