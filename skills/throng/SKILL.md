@@ -21,7 +21,7 @@ Self-contained, written for a reader with no context: the task, the repository a
 
 ## One turn or a conversation
 
-`run_thronglet` creates the session and runs the first turn; `send_message` runs the next one in the same session, with the harness's own memory of the earlier turns. One message is one turn. Use a follow-up instead of a new run whenever the context already lives in the session: "now fix what you found", "the tests fail with this output, continue", a corrected structured result. Not every harness can continue a session: when `send_message` fails with `session_not_found` saying the adapter does not support `session/resume`, sessions of that harness are one turn. Then start a new run with the earlier result in its prompt, and never steer such a session: `steer: true` cancels the running turn and then fails the same way; use `cancel_thronglet` and a new run instead.
+`run_thronglet` creates the session and runs the first turn; `send_message` runs the next one in the same session, with the harness's own memory of the earlier turns. One message is one turn. Use a follow-up instead of a new run whenever the context already lives in the session: "now fix what you found", "the tests fail with this output, continue", a corrected structured result.
 
 Messages to a session whose turn is still running queue up and run in order; the queue lives in the server process and is lost if it dies. `steer: true` interrupts the running turn instead and runs your message next, ahead of the queue: the agent keeps its memory of what it was doing, the in-flight tool call is aborted and a half-applied edit may remain. Steer only when the correction cannot wait for the turn to end, e.g. "stop, do not touch the migrations".
 
