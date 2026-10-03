@@ -21,4 +21,6 @@ export const gemini: HarnessDefinition = {
         modeId: policy === 'auto' ? 'yolo' : 'default',
         env: { GEMINI_CLI_TRUST_WORKSPACE: 'true' },
     }),
+    // Gemini CLI echoes every set_mode as agent text.
+    preTurnNoise: [/^\[MODE_UPDATE\] \S+$/],
 };

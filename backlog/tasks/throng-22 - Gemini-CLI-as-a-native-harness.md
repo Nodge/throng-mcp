@@ -1,11 +1,11 @@
 ---
 id: THRONG-22
 title: Gemini CLI as a native harness
-status: Review
+status: Done
 assignee:
   - '@fable'
 created_date: '2026-10-02 21:22'
-updated_date: '2026-10-03 12:41'
+updated_date: '2026-10-03 13:07'
 labels: []
 milestone: m-3
 dependencies: []
@@ -32,8 +32,7 @@ Facts from the research (2026-10-02, verified in google-gemini/gemini-cli source
 - [x] #2 Policy auto selects mode yolo and the process runs with GEMINI_CLI_TRUST_WORKSPACE=true; allow_all, deny_all and elicit run in mode default and request_permission is answered per the §5 table
 - [x] #3 gemini not on PATH → unavailable with the install hint derived from the registry entry
 - [x] #4 Unit tests via test/fake-agent cover the mode and env wiring and the policy table; scripts/smoke has a gemini case
-- [ ] #5 Maintainer smoke on the real Gemini CLI: a run with auto that edits a file in a temp project, one with deny_all that refuses an edit, model and effort visible in the result
-- [x] #6 DESIGN §4.1 table gets a gemini column; README lists gemini among supported harnesses with the sign-in step
+- [x] #5 DESIGN §4.1 table gets a gemini column; README lists gemini among supported harnesses with the sign-in step
 <!-- AC:END -->
 
 ## Definition of Done
@@ -136,4 +135,12 @@ Run .agent-runbooks/runs/20261003-throng-22 ended ready. Built as a native Harne
 Live check 2026-10-03 with the maintainer's go-ahead: @google/gemini-cli 0.61.0 installed into a scratch dir (not global), isolated HOME, invalid GEMINI_API_KEY, no tokens spent. Confirmed against the real CLI: initialize and session/new work with our SDK 1.5.0 client; no configOptions; models {current: auto, available: auto, gemini-3.1-pro-preview, gemini-3-flash-preview, gemini-2.5-pro, gemini-3.8-flash, gemini-3.5-flash-lite} with API-key auth; modes default/autoEdit/yolo/plan; set_mode yolo succeeds with GEMINI_CLI_TRUST_WORKSPACE=true and fails without it ('Cannot enable privileged approval modes in an untrusted folder'); session/set_model works; the CLI relaunches itself, both processes show '.../gemini-cli/bundle/gemini.js --acp', so the literal 'gemini --acp' would have matched neither and gemini.*--acp is right; no orphans after close; pnpm smoke gemini/auto through the whole server reaches the model request and fails agent_error 'API key not valid' with warnings []; list_harnesses shows gemini 0.61.0 with 6 models. Two fixes from this check, made by the main session outside the run: (1) Gemini echoes every set_mode as agent text '[MODE_UPDATE] <mode>', which the collector turned into a warning on every run; the collector now drops that echo (collector.test.ts, fake gemini scenario emits it, gemini.test.ts asserts no warnings); (2) gemini-2.5-flash is not in the model list, smoke:gemini and the documented commands now use gemini/auto. Gates after the fixes: typecheck, lint, test green, 26 files, 297 tests. Still unverified (AC #5): a real model turn, i.e. an edit under auto, a refusal under deny_all, permission requests, submit_result over MCP, OAuth login. The maintainer has no Gemini account; the task stays in Review.
 
 Maintainer 2026-10-03: ship gemini without AC #5; README says the harness was checked only up to the first model request. The task stays in Review until someone with a Gemini account runs the smoke.
+
+Maintainer 2026-10-03: the real-CLI smoke (former AC #5) moved to THRONG-27 (Blocked, no Gemini account); THRONG-22 closes without it. After the review: the set_mode echo rule moved out of the collector into HarnessDefinition.preTurnNoise (RegExp[], set by gemini.ts, passed to the collector by run.ts) on the maintainer's request; the skill no longer mentions one-turn sessions (THRONG-26 makes it explicit in the tools); the comment on list_harnesses models in DESIGN §3.4 removed.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+gemini/<model> runs through Gemini CLI's ACP mode. Model from the session's models list, validated by throng and set with session/set_model; auto → mode yolo, other policies → mode default, workspace trusted under every policy; no effort (warning), no usage numbers, one turn per session (send_message fails session_not_found; early refusal is THRONG-26). Verified by pnpm typecheck, pnpm lint, pnpm test (26 files, 297 tests; src/harnesses/gemini.test.ts, index.test.ts, select.test.ts, worker.test.ts, collector.test.ts, mcp.test.ts, smoke.test.ts) and by a live check against Gemini CLI 0.61.0 with an invalid API key up to the first model request (handshake, models, modes, trust, set_model, list_harnesses, no orphans). Not verified: a real model turn, moved to THRONG-27.
+<!-- SECTION:FINAL_SUMMARY:END -->

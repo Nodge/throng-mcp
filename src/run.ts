@@ -199,6 +199,7 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
             );
         }
         const def = harnessById(target.harness);
+        collector.preTurnNoise = def.preTurnNoise ?? [];
         const resolution = def.resolve(config, loadRegistry(), ctx.env);
         if (!resolution.available) throw new ThrongError('harness_unavailable', resolution.reason);
         // spawn would fail with ENOENT anyway; checking first gives a message that names the cause.

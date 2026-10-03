@@ -54,4 +54,6 @@ export interface HarnessDefinition {
     /** Our effort level → value of the `thought_level` option; `undefined` = not applicable, reported as a warning. */
     mapEffort(level: Effort, options: string[]): string | undefined;
     permissionSetup(policy: PermissionPolicy): PermissionSetup;
+    /** Agent messages outside a turn that are routine for this harness; dropped instead of reported as warnings. */
+    preTurnNoise?: RegExp[];
 }

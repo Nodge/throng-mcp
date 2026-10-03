@@ -25,14 +25,16 @@ describe('collector', () => {
         expect(c.text).toBe('second');
     });
 
-    it("Gemini CLI's set_mode echo before the turn is dropped", () => {
+    it('pre-turn text matching preTurnNoise is dropped; other text still warns', () => {
         const c = new Collector();
+        c.preTurnNoise = [/^\[MODE_UPDATE\] \S+$/];
         c.handle(text('[MODE_UPDATE] yolo'));
+        c.handle(text('something else'));
         c.startTurn();
-        c.handle(text('done'));
+        c.handle(text('[MODE_UPDATE] yolo'));
         c.endTurn(stop());
-        expect(c.text).toBe('done');
-        expect(c.warnings).toStrictEqual([]);
+        expect(c.text).toBe('[MODE_UPDATE] yolo');
+        expect(c.warnings).toStrictEqual(['agent message before the task: something else']);
     });
 
     it('agent text before the turn becomes a warning, not text', () => {
