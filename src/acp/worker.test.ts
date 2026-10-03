@@ -298,12 +298,21 @@ describe('worker', () => {
         await withWorker('early-update', early, { start: { kind: 'resume', sessionId: 'abc', cwd, mcpServers: [] } });
     });
 
-    it('fs/* call from the agent: one warning, prompt still completes', async () => {
+    it('fs/* call from the agent: no warning, prompt still completes', async () => {
         await withWorker('fs-call', async h => {
             expect(await h.turn('a')).toBe('echo: a [model=fake-small effort=low]');
             await h.turn('b');
+            expect(h.warnings).toStrictEqual([]);
+        });
+    });
+
+    it('fs/* and terminal/* calls get method not found; only terminal/* warns, once per worker', async () => {
+        await withWorker('terminal-call', async h => {
+            // -32601: JSON-RPC "method not found".
+            expect(await h.turn('a')).toBe('fs=-32601 terminal=-32601 echo: a [model=fake-small effort=low]');
+            await h.turn('b');
             expect(h.warnings.length).toBe(1);
-            expect(h.warnings[0] ?? '').toMatch(/fs\/read_text_file/);
+            expect(h.warnings[0] ?? '').toMatch(/terminal\/create/);
         });
     });
 

@@ -9,6 +9,7 @@ export type FakeScenario =
     | 'handshake-hang'
     | 'crash-on-prompt'
     | 'fs-call'
+    | 'terminal-call'
     | 'grandchild'
     | 'grandchild-detached'
     | 'no-resume'

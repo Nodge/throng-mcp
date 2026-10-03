@@ -8,6 +8,7 @@ import type {
 import type { ChildProcess } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
 import { type ErrorCode, ThrongError } from '../contract.ts';
+import { log } from '../log.ts';
 import { type AdapterProcess, killTree, snapshotDescendants, spawnAdapter } from './process.ts';
 import type {
     SessionStart,
@@ -30,10 +31,13 @@ export const DEFAULT_EXIT_GRACE_MS = 5000;
  */
 const EXIT_SETTLE_MS = 1000;
 
-/** Client methods we don't advertise (DESIGN §4.2): answered "method not found" plus one warning. */
-const UNADVERTISED_METHODS = [
-    acp.methods.client.fs.readTextFile,
-    acp.methods.client.fs.writeTextFile,
+/**
+ * Client fs methods we don't advertise (DESIGN §4.2): answered "method not found" and only logged, since OpenCode
+ * calls `fs/write_text_file` after writing the file itself.
+ */
+const UNADVERTISED_FS_METHODS = [acp.methods.client.fs.readTextFile, acp.methods.client.fs.writeTextFile] as const;
+/** Client terminal methods we don't advertise (DESIGN §4.2): answered "method not found" plus one warning per worker. */
+const UNADVERTISED_TERMINAL_METHODS = [
     acp.methods.client.terminal.create,
     acp.methods.client.terminal.output,
     acp.methods.client.terminal.release,
@@ -120,7 +124,16 @@ class AcpWorker implements Worker {
                 if (this.#sessionId === undefined || ctx.params.sessionId === this.#sessionId)
                     this.#hooks.onUpdate?.(ctx.params);
             });
-        for (const method of UNADVERTISED_METHODS) {
+        for (const method of UNADVERTISED_FS_METHODS) {
+            app = app.onRequest(method, () => {
+                log.info('adapter called an unadvertised client method; answered "method not found"', {
+                    method,
+                    pid: this.pid,
+                });
+                throw acp.RequestError.methodNotFound(method);
+            });
+        }
+        for (const method of UNADVERTISED_TERMINAL_METHODS) {
             app = app.onRequest(method, () => {
                 if (!this.#warned) {
                     this.#warned = true;

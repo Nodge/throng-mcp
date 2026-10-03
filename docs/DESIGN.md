@@ -325,7 +325,7 @@ Cancel (MCP `extra.signal` abort, i.e. Esc/TaskStop): `session/cancel` → wait 
 
 Server shutdown (`SIGTERM`/`SIGINT`/EOF on stdin): step 7 for every live worker, then exit.
 
-Client methods `fs/*`, `terminal/*`: not advertised; if an agent calls them anyway (OpenCode quirk) we answer JSON-RPC method not found and add one warning.
+Client methods `fs/*`, `terminal/*`: not advertised; if an agent calls them anyway we answer JSON-RPC method not found. An `fs/*` call is only logged to stderr (OpenCode calls `fs/write_text_file` after writing the file itself); a `terminal/*` call also adds one warning per worker.
 
 ### 4.3 Collector
 

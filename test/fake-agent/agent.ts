@@ -319,6 +319,17 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
                 /* ignored */
             });
             break;
+        case 'terminal-call': {
+            const code = (e: { code?: number }) => e.code;
+            const fs = await client
+                .request(acp.methods.client.fs.writeTextFile, { sessionId, path: '/tmp/fake-agent', content: '' })
+                .then(() => 'ok', code);
+            const terminal = await client
+                .request(acp.methods.client.terminal.create, { sessionId, command: 'true' })
+                .then(() => 'ok', code);
+            await say(`fs=${fs} terminal=${terminal} `);
+            break;
+        }
         case 'notice':
             await send({
                 sessionUpdate: 'notice',
