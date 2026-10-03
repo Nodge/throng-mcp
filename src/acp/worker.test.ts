@@ -81,7 +81,13 @@ interface Harness {
 
 async function start(
     scenario: FakeScenario,
-    options: { start?: SessionStart; depth?: number; onPermission?: WorkerHooks['onPermission'] } = {}
+    options: {
+        start?: SessionStart;
+        depth?: number;
+        onPermission?: WorkerHooks['onPermission'];
+        /** Merged over the fake agent's env. */
+        env?: Record<string, string>;
+    } = {}
 ): Promise<Harness> {
     const spawn = fakeAgentSpawn(scenario);
     tags.push(spawn.tag);
@@ -89,7 +95,13 @@ async function start(
     const updates: SessionNotification[] = [];
     const warnings: string[] = [];
     const worker = await startWorker(
-        { command: spawn.command, args: spawn.args, env: spawn.env, cwd, depth: options.depth ?? 0 },
+        {
+            command: spawn.command,
+            args: spawn.args,
+            env: { ...spawn.env, ...options.env },
+            cwd,
+            depth: options.depth ?? 0,
+        },
         options.start ?? newSession,
         {
             onUpdate: n => {
@@ -179,6 +191,24 @@ describe('worker', () => {
             const err = await rejectsWith(h.worker.setConfigOption('model', 'fake-huge'), 'agent_error');
             expect(err.message).toMatch(/fake-large/);
         });
+    });
+
+    it('setConfigOption with a boolean goes out as a boolean option value', async () => {
+        const brave = { id: 'brave_mode', name: 'Brave mode', type: 'boolean', currentValue: false };
+        await withWorker(
+            'echo',
+            async ({ worker }) => {
+                const options = await worker.setConfigOption('brave_mode', true);
+                const option = options.find(o => o.id === 'brave_mode');
+                expect(option?.type === 'boolean' && option.currentValue).toBe(true);
+                expect(worker.session.configOptions).toStrictEqual(options);
+
+                // The fake rejects a boolean option's value sent without `type: 'boolean'`.
+                const err = await rejectsWith(worker.setConfigOption('brave_mode', 'true'), 'agent_error');
+                expect(err.message).toMatch(/brave_mode is a boolean option/);
+            },
+            { env: { FAKE_CONFIG_OPTIONS: JSON.stringify([brave]) } }
+        );
     });
 
     it('usage: tokens summed across turns, cost is the last cumulative value', async () => {

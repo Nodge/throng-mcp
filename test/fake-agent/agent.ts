@@ -11,11 +11,13 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { appendFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { EXECUTOR_PREFIX } from '../../src/prompt.ts';
+import type { FakeCall } from './index.ts';
 
 // Minimal ACP agent for tests; no LLM. Scenario via FAKE_SCENARIO (default `echo`), see index.ts.
 // Every echo turn also sends `session_info_update` with `_meta.throngDepth` = the THRONG_MCP_DEPTH it sees.
@@ -23,6 +25,18 @@ import { EXECUTOR_PREFIX } from '../../src/prompt.ts';
 const scenario = process.env.FAKE_SCENARIO ?? 'echo';
 /** FAKE_TURN_MS: an echo turn takes this long before answering (a cancel cuts it short); 0 by default. */
 const turnMs = Number(process.env.FAKE_TURN_MS ?? 0);
+/** FAKE_CONFIG_OPTIONS: extra options (JSON `SessionConfigOption[]`) every session advertises after model and effort. */
+const extraOptions = process.env.FAKE_CONFIG_OPTIONS;
+/** FAKE_CALL_LOG: a file this process appends one JSON line per event to, in the order it saw them. */
+const callLog = process.env.FAKE_CALL_LOG;
+
+function record(call: FakeCall): void {
+    if (callLog) appendFileSync(callLog, `${JSON.stringify(call)}\n`);
+}
+
+record({ event: 'start', argv: process.argv.slice(2) });
+/** FAKE_STDERR: a line written to stderr at startup, before the handshake. */
+if (process.env.FAKE_STDERR) process.stderr.write(`${process.env.FAKE_STDERR}\n`);
 
 interface FakeSession {
     resumed: boolean;
@@ -100,6 +114,7 @@ function freshSession(resumed: boolean, cwd: string, mcpServers: McpServer[]): F
         prompts: 0,
     };
     if (scenario === 'no-effort-option') session.configOptions = session.configOptions.filter(o => o.id !== 'effort');
+    if (extraOptions) session.configOptions.push(...(JSON.parse(extraOptions) as SessionConfigOption[]));
     return session;
 }
 
@@ -432,6 +447,7 @@ app.onRequest('session/new', async ctx => {
     })
     .onRequest('session/set_mode', async ctx => {
         const session = getSession(ctx.params.sessionId);
+        record({ event: 'set_mode', modeId: ctx.params.modeId, resumed: session.resumed });
         const valid = modes(session).availableModes.map(m => m.id);
         if (!valid.includes(ctx.params.modeId)) {
             throw acp.RequestError.invalidParams(
@@ -462,7 +478,18 @@ app.onRequest('session/new', async ctx => {
     .onRequest('session/set_config_option', ctx => {
         const session = getSession(ctx.params.sessionId);
         const { configId, value } = ctx.params;
+        record({ event: 'set_config_option', configId, value, resumed: session.resumed });
         const option = session.configOptions.find(o => o.id === configId);
+        if (option?.type === 'boolean') {
+            if (!('type' in ctx.params) || typeof value !== 'boolean') {
+                throw acp.RequestError.invalidParams(
+                    undefined,
+                    `${configId} is a boolean option; got ${String(value)}`
+                );
+            }
+            option.currentValue = value;
+            return { configOptions: session.configOptions };
+        }
         if (option?.type !== 'select') {
             const ids = session.configOptions.map(o => o.id);
             throw acp.RequestError.invalidParams(
@@ -486,6 +513,7 @@ app.onRequest('session/new', async ctx => {
         const controller = new AbortController();
         session.pending = controller;
         session.prompts++;
+        record({ event: 'prompt', resumed: session.resumed });
         const text = ctx.params.prompt.map(block => (block.type === 'text' ? block.text : '')).join('');
         try {
             await runTurn(ctx.params.sessionId, text, ctx.client, controller.signal);

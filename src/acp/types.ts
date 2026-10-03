@@ -66,8 +66,8 @@ export interface Worker {
     readonly session: WorkerSession;
     readonly pid: number;
     setMode(modeId: string): Promise<void>;
-    /** Returns the refreshed option list the agent sends back. */
-    setConfigOption(configId: string, value: string): Promise<SessionConfigOption[]>;
+    /** A boolean `value` is sent as a boolean option's value. Returns the refreshed option list the agent sends back. */
+    setConfigOption(configId: string, value: string | boolean): Promise<SessionConfigOption[]>;
     /** One turn: resolves when the agent reports `stop`; updates arrive through `onUpdate` meanwhile. */
     prompt(text: string): Promise<PromptResponse>;
     /** `session/cancel`; the pending `prompt` then resolves with `stopReason: 'cancelled'` (or rejects if the agent dies). */

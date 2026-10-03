@@ -17,6 +17,8 @@ import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { loadConfig, type LoadedConfig } from './config.ts';
 import type { RunFailure, RunSuccess } from './contract.ts';
+import { HARNESSES } from './harnesses/index.ts';
+import type { PermissionSetup } from './harnesses/types.ts';
 import { log } from './log.ts';
 import { createProgress, type ProgressNotification } from './mcp/progress.ts';
 import type { Elicitation } from './permissions.ts';
@@ -28,7 +30,7 @@ import { SessionRegistry } from './registry.ts';
 import type { RunContext, RunOutcome } from './run.ts';
 import { Semaphore } from './semaphore.ts';
 import { type SessionRecord, writeSessionRecord } from './sessions.ts';
-import type { FakeScenario } from '../test/fake-agent/index.ts';
+import { type FakeCall, type FakeScenario, readFakeCalls } from '../test/fake-agent/index.ts';
 import { submitTool } from '../test/fake-harness.ts';
 
 const root = mkdtempSync(join(tmpdir(), 'throng-run-'));
@@ -586,6 +588,141 @@ describe('permission policies', () => {
         } finally {
             info.mockRestore();
         }
+    });
+});
+
+describe('permission setup: config options and launch args', () => {
+    const advertised = [
+        {
+            id: 'allow_all',
+            name: 'Allow all',
+            type: 'select',
+            currentValue: 'off',
+            options: [
+                { value: 'off', name: 'Off' },
+                { value: 'on', name: 'On' },
+            ],
+        },
+        { id: 'brave_mode', name: 'Brave mode', type: 'boolean', currentValue: false },
+    ];
+
+    /** Runs `body` with the claude definition's permissionSetup returning `setup`; the fake advertises `advertised`. */
+    async function withSetup(
+        setup: PermissionSetup,
+        body: (h: { ctx: RunContext; calls: () => FakeCall[]; tag: string }) => Promise<void>,
+        agentEnv: Record<string, string> = {}
+    ): Promise<void> {
+        const callLog = join(mkdtempSync(join(root, 'calls-')), 'calls.jsonl');
+        const { loaded, tag } = fakeClaude('echo', '', {
+            FAKE_CONFIG_OPTIONS: JSON.stringify(advertised),
+            FAKE_CALL_LOG: callLog,
+            ...agentEnv,
+        });
+        const spy = vi.spyOn(HARNESSES.claude, 'permissionSetup').mockReturnValue(setup);
+        try {
+            await body({ ctx: makeCtx(loaded), calls: () => readFakeCalls(callLog), tag });
+        } finally {
+            spy.mockRestore();
+        }
+    }
+
+    /** The calls without argv, as `<event> <id>=<value>` strings; `^` marks a resumed session. */
+    const summary = (calls: FakeCall[]) =>
+        calls.map(c => {
+            if (c.event === 'start') return 'start';
+            const r = c.resumed ? '^' : '';
+            if (c.event === 'set_mode') return `${r}set_mode ${c.modeId}`;
+            if (c.event === 'set_config_option')
+                return `${r}set_config_option ${c.configId}=${JSON.stringify(c.value)}`;
+            return `${r}prompt`;
+        });
+
+    it('config options go in order between the mode and the model, on new and resumed sessions; args reach both processes', async () => {
+        await withSetup(
+            {
+                modeId: 'default',
+                configOptions: [
+                    { id: 'allow_all', value: 'on' },
+                    { id: 'brave_mode', value: true },
+                ],
+                args: ['--yolo', '--level=max'],
+            },
+            async ({ ctx, calls, tag }) => {
+                const first = ok(await runThronglet(input('claude/fake-small'), ctx));
+                expect(first.warnings).toBe(undefined);
+                expect(summary(calls())).toStrictEqual([
+                    'start',
+                    'set_mode default',
+                    'set_config_option allow_all="on"',
+                    'set_config_option brave_mode=true',
+                    'set_config_option model="fake-small"',
+                    'prompt',
+                ]);
+
+                const second = ok(await sendMessage({ session_id: first.session_id, prompt: 'again' }, ctx));
+                expect(second.warnings).toBe(undefined);
+                expect(summary(calls()).slice(6)).toStrictEqual([
+                    'start',
+                    '^set_mode default',
+                    '^set_config_option allow_all="on"',
+                    '^set_config_option brave_mode=true',
+                    '^set_config_option model="fake-small"',
+                    '^prompt',
+                ]);
+
+                const argvs = calls().flatMap(c => (c.event === 'start' ? [c.argv] : []));
+                expect(argvs).toStrictEqual([
+                    [`--tag=${tag}`, '--yolo', '--level=max'],
+                    [`--tag=${tag}`, '--yolo', '--level=max'],
+                ]);
+            }
+        );
+    });
+
+    it('an option the agent does not advertise or rejects → warning, the turn runs', async () => {
+        await withSetup(
+            {
+                configOptions: [
+                    { id: 'missing', value: 'on' },
+                    { id: 'allow_all', value: 'maybe' },
+                    { id: 'brave_mode', value: true },
+                ],
+            },
+            async ({ ctx, calls }) => {
+                const payload = ok(await runThronglet(input('claude/fake-small'), ctx));
+                expect(payload.text).toMatch(/^echo: /);
+                expect(payload.warnings).toHaveLength(2);
+                expect(payload.warnings?.[0]).toBe(
+                    'permission option "missing" not applied: claude does not advertise it'
+                );
+                expect(payload.warnings?.[1]).toMatch(
+                    /^permission option "allow_all" not applied: claude rejected it: .*invalid value maybe for allow_all/
+                );
+                expect(summary(calls())).toStrictEqual([
+                    'start',
+                    'set_config_option allow_all="maybe"',
+                    'set_config_option brave_mode=true',
+                    'set_config_option model="fake-small"',
+                    'prompt',
+                ]);
+            }
+        );
+    });
+
+    it('a rejection warning carries the agent error text, not the adapter stderr', async () => {
+        await withSetup(
+            { configOptions: [{ id: 'allow_all', value: 'maybe' }] },
+            async ({ ctx }) => {
+                const payload = ok(await runThronglet(input('claude/fake-small'), ctx));
+                expect(payload.warnings).toHaveLength(1);
+                const warning = payload.warnings?.[0] ?? '';
+                expect(warning).toMatch(
+                    /^permission option "allow_all" not applied: claude rejected it: .*invalid value maybe for allow_all/
+                );
+                expect(warning).not.toMatch(/adapter stderr|noisy adapter log line/);
+            },
+            { FAKE_STDERR: 'noisy adapter log line' }
+        );
     });
 });
 

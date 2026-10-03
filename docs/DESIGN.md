@@ -302,9 +302,17 @@ interface HarnessDefinition {                 // src/harnesses/types.ts
   registryId: string;
   resolve(config, registry, env?): { available: true; launch: { command; args; env } } | { available: false; reason: string };
   mapEffort(level: Effort, options: string[]): string | undefined;   // our level → option value; undefined = not applicable → warning
-  permissionSetup(policy): { modeId?: string; env?: Record<string,string>; newSessionMeta?: object };
+  permissionSetup(policy): {
+    modeId?: string;
+    env?: Record<string,string>;
+    newSessionMeta?: object;
+    configOptions?: Array<{ id: string; value: string | boolean }>;   // session/set_config_option by id, after the mode
+    args?: string[];                                                   // appended to the launch args
+  };
 }
 ```
+
+`permissionSetup` covers the ways agents switch approval: a session mode, env of the adapter process, `session/new._meta`, a config option (`allow_all=on`, `brave_mode=true`) and a launch flag. The mode is strict: failing to set it fails the run. `configOptions` are best effort: an option the agent does not advertise, or one it rejects, becomes a warning and the turn runs in whatever asking mode the agent is in, where the server's answers (§5) still hold the policy. `args` and `env` apply to the processes of a run; the `list_harnesses` probe has no policy and launches without them.
 
 Model is set strictly: the value must be in `options` of the matching config option, otherwise `model_rejected` with the list. Effort: `mapEffort` picks the option value; `undefined` → `warnings`, not an error.
 
@@ -316,7 +324,7 @@ Sequence:
 1. `spawn` (detached, own group, `stdio: [pipe, pipe, pipe]`, stderr → 64 KB ring buffer for error messages). `THRONG_MCP_DEPTH = depth + 1` in the child env.
 2. `connectWith(ndJsonStream)`, `initialize` (`clientCapabilities: { fs: {readTextFile:false, writeTextFile:false}, terminal:false }`).
 3. `session/new { cwd, mcpServers }` (+ `_meta` from the harness), or `session/resume { sessionId, cwd, mcpServers }` for every later turn (requires `sessionCapabilities.resume`; unknown id → `session_not_found`). Steps 1–3 run under the handshake timeout (60 s) → `handshake_timeout`.
-4. Mode (`setSessionMode`), model, effort via `setSessionConfigOption`.
+4. Mode (`setSessionMode`), the policy's config options (§4.1), model, effort via `setSessionConfigOption`. Runs after `session/resume` as well: a fresh adapter process starts in its defaults.
 5. `prompt` → `nextUpdate()` loop until `stop`. Every event → collector + progress.
 6. Structured-output re-prompts (§6): step 5 again.
 7. `close()`: close stdin, wait 5 s for exit, then `SIGTERM` to the group, 5 s more → `SIGKILL`; finish off the descendant snapshot (`pgrep -P`, recursive, taken before close).

@@ -4,6 +4,7 @@ import type {
     InitializeResponse,
     PromptResponse,
     SessionConfigOption,
+    SetSessionConfigOptionRequest,
 } from '@agentclientprotocol/sdk';
 import type { ChildProcess } from 'node:child_process';
 import { Readable, Writable } from 'node:stream';
@@ -24,6 +25,8 @@ import type {
 
 /** How much of the stderr tail goes into error messages; the full 64 KB stays behind `stderrTail()`. */
 const STDERR_IN_MESSAGE = 2048;
+/** Separates an error's cause from the adapter stderr tail appended to it. */
+const STDERR_MARKER = '; adapter stderr: ';
 export const DEFAULT_EXIT_GRACE_MS = 5000;
 /**
  * How long to wait for the child's stdio to drain after it exited, and for its exit status after
@@ -271,14 +274,15 @@ class AcpWorker implements Worker {
         );
     }
 
-    async setConfigOption(configId: string, value: string): Promise<SessionConfigOption[]> {
-        const response = await this.#call(acp.methods.agent.session.setConfigOption, () =>
-            this.#connection.agent.request(acp.methods.agent.session.setConfigOption, {
-                sessionId: this.session.sessionId,
-                configId,
-                value,
-            })
-        );
+    async setConfigOption(configId: string, value: string | boolean): Promise<SessionConfigOption[]> {
+        const response = await this.#call(acp.methods.agent.session.setConfigOption, () => {
+            const { sessionId } = this.session;
+            const params: SetSessionConfigOptionRequest =
+                typeof value === 'boolean'
+                    ? { sessionId, configId, type: 'boolean', value }
+                    : { sessionId, configId, value };
+            return this.#connection.agent.request(acp.methods.agent.session.setConfigOption, params);
+        });
         if (this.#session) this.#session.configOptions = response.configOptions;
         return response.configOptions;
     }
@@ -364,8 +368,14 @@ class AcpWorker implements Worker {
 
     #error(code: ErrorCode, cause: string): ThrongError {
         const tail = this.stderrTail().slice(-STDERR_IN_MESSAGE).trim();
-        return new ThrongError(code, tail ? `${cause}; adapter stderr: ${tail}` : cause);
+        return new ThrongError(code, tail ? `${cause}${STDERR_MARKER}${tail}` : cause);
     }
+}
+
+/** A worker error's message without the adapter stderr tail, for errors that don't fail the run. */
+export function withoutStderrTail(message: string): string {
+    const at = message.indexOf(STDERR_MARKER);
+    return at === -1 ? message : message.slice(0, at);
 }
 
 function buildSession(

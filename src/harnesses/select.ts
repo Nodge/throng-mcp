@@ -1,9 +1,11 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk';
 import type { Worker } from '../acp/types.ts';
+import { withoutStderrTail } from '../acp/worker.ts';
 import { type Effort, ThrongError } from '../contract.ts';
-import type { HarnessDefinition } from './types.ts';
+import type { ConfigOptionValue, HarnessDefinition } from './types.ts';
 
-// Model/effort selection after the handshake (DESIGN §4.1). Options are found by `category`, never by id.
+// Model/effort selection after the handshake (DESIGN §4.1). Options are found by `category`, never by id;
+// the permission policy's config options are the exception, set by the id the harness definition names.
 
 /** Above this many models the rejection lists only the requested provider's ones. */
 const FULL_LIST_MAX = 40;
@@ -53,6 +55,27 @@ export async function selectModel(worker: Worker, model: string): Promise<void> 
     if (!option.values.includes(model))
         throw new ThrongError('model_rejected', modelRejectedMessage(model, option.values));
     await setOption(worker, option.id, model);
+}
+
+/**
+ * Sets one of the permission policy's config options (DESIGN §4.1), best effort: an option the agent does not
+ * advertise, or an `agent_error` from the agent, is returned as a warning. Other failures propagate.
+ */
+export async function applyConfigOption(
+    def: HarnessDefinition,
+    worker: Worker,
+    option: { id: string; value: ConfigOptionValue }
+): Promise<string | undefined> {
+    const head = `permission option "${option.id}" not applied`;
+    if (!currentOptions(worker)?.some(o => o.id === option.id)) return `${head}: ${def.id} does not advertise it`;
+    try {
+        await worker.setConfigOption(option.id, option.value);
+    } catch (err) {
+        if (err instanceof ThrongError && err.code === 'agent_error')
+            return `${head}: ${def.id} rejected it: ${withoutStderrTail(err.message)}`;
+        throw err;
+    }
+    return undefined;
 }
 
 /** Sets the `thought_level` option through `def.mapEffort`; returns a warning instead of failing when it can't. */

@@ -17,7 +17,7 @@ import {
     toThrongError,
 } from './contract.ts';
 import { harnessById, loadRegistry } from './harnesses/index.ts';
-import { selectEffort, selectModel } from './harnesses/select.ts';
+import { applyConfigOption, selectEffort, selectModel } from './harnesses/select.ts';
 import { RunLifecycle } from './lifecycle.ts';
 import { log } from './log.ts';
 import {
@@ -269,7 +269,7 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
             startWorker(
                 {
                     command: launch.command,
-                    args: launch.args,
+                    args: [...launch.args, ...(setup.args ?? [])],
                     env: { ...launch.env, ...setup.env },
                     cwd: target.cwd,
                     depth: ctx.depth,
@@ -314,11 +314,16 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
             });
         }
 
-        // A fresh adapter process starts in its defaults, so a resumed session gets mode, model and effort again (§3.3).
-        // The mode is the policy's teeth: failing to set it fails the run. Model before effort: effort values may depend on it.
+        // A fresh adapter process starts in its defaults, so a resumed session gets mode, the policy's config options,
+        // model and effort again (§3.3). The mode is the policy's teeth: failing to set it fails the run; the config
+        // options are best effort (§4.1). Model before effort: effort values may depend on it.
         if (setup.modeId) {
             requestedMode = setup.modeId;
             await lifecycle.guard(worker.setMode(setup.modeId));
+        }
+        for (const option of setup.configOptions ?? []) {
+            const warning = await lifecycle.guard(applyConfigOption(def, worker, option));
+            if (warning) warn(warning);
         }
         await lifecycle.guard(selectModel(worker, target.model));
         if (target.effort) {

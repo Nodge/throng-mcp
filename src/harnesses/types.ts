@@ -32,11 +32,18 @@ export interface HarnessLaunch {
 /** `reason` is what `list_harnesses.unavailable[].reason` and `harness_unavailable` carry, install hint included. */
 export type HarnessResolution = { available: true; launch: HarnessLaunch } | { available: false; reason: string };
 
-/** How a permission policy is expressed natively: a session mode, env for the adapter, `session/new._meta`. */
+/** A value for `session/set_config_option`: a select option's value id, or the value of a boolean option. */
+export type ConfigOptionValue = string | boolean;
+
+/** How a permission policy is expressed natively. Everything here is per adapter process, so it applies to resumed turns too. */
 export interface PermissionSetup {
     modeId?: string;
     env?: Record<string, string>;
     newSessionMeta?: Record<string, unknown>;
+    /** Set by id after the mode, in order. Best effort, unlike the mode: an option the agent lacks or rejects is a warning. */
+    configOptions?: { id: string; value: ConfigOptionValue }[];
+    /** Appended to the launch args of the adapter process. */
+    args?: string[];
 }
 
 export interface HarnessDefinition {
