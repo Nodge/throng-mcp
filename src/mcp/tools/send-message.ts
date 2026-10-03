@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { ThrongError } from '../../contract.ts';
 import { type RunContext, type RunOutcome, runCall } from '../../run.ts';
 import { loadSessionRecord } from '../../sessions.ts';
 import type { ToolEnv } from '../tools.ts';
@@ -35,11 +36,17 @@ export function sendMessage(input: SendMessageInput, ctx: RunContext): Promise<R
             timeout_s: input.timeout_s,
             logFields: { session_id: input.session_id, ...(input.steer ? { steer: true } : {}) },
             ...(input.steer ? { steer: true } : {}),
-            request: async () => ({
-                kind: 'resume',
-                sessionId: input.session_id,
-                record: await loadSessionRecord(ctx.cacheDir, input.session_id),
-            }),
+            request: async () => {
+                const record = await loadSessionRecord(ctx.cacheDir, input.session_id);
+                // Before the steer abort and the spawn: the running turn of a one-turn session is left alone.
+                if (record.resumable === false) {
+                    throw new ThrongError(
+                        'session_not_found',
+                        `session ${input.session_id} cannot take another message: the ${record.harness} harness has no session/resume, so its sessions are one turn`
+                    );
+                }
+                return { kind: 'resume', sessionId: input.session_id, record };
+            },
         },
         ctx
     );
@@ -56,7 +63,9 @@ export function register(server: McpServer, env: ToolEnv): void {
                 'as run_thronglet. A message to a session whose turn is still running waits for that turn to end: turns on ' +
                 'one session never overlap. ' +
                 BACKGROUND_NOTE +
-                ' steer: true interrupts the running turn and delivers this message next; queued messages follow it.',
+                ' steer: true interrupts the running turn and delivers this message next; queued messages follow it. ' +
+                'A session whose harness cannot resume takes no further message, steer included: list_thronglets shows ' +
+                'it as accepts_messages: false.',
             inputSchema,
         },
         (args, extra) =>

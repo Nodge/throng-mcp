@@ -541,7 +541,7 @@ describe('run_thronglet over stdio', () => {
             const listed = await client.callTool({ name: 'list_thronglets', arguments: {} });
             expect(listed.isError).toBe(undefined);
             expect((payloadOf(listed) as ListThrongletsOutput).thronglets).toMatchObject([
-                { session_id: id, description: 'cancel me', state: 'running', queued: 0 },
+                { session_id: id, description: 'cancel me', state: 'running', queued: 0, accepts_messages: true },
             ]);
 
             const cancelled = await client.callTool({ name: 'cancel_thronglet', arguments: { session_id: id } });

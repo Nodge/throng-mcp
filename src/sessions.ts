@@ -16,6 +16,11 @@ export interface SessionRecord {
     description: string;
     created_at: string;
     last_used_at: string;
+    /**
+     * Whether the adapter advertised `sessionCapabilities.resume` in the handshake of the turn that created the session;
+     * absent (unknown) on records written by earlier versions.
+     */
+    resumable?: boolean;
     /** Set while a turn runs (ISO); cleared together with `turn_pid` when the turn's outcome is written. */
     turn_started_at?: string;
     /** The throng server process running the turn: records are shared by every server instance on the machine. */

@@ -11,7 +11,7 @@ export function register(server: McpServer, env: ToolEnv): void {
         {
             description:
                 'Lists thronglet sessions on this machine: description, agent, cwd, state (running | queued | idle | failed), ' +
-                "queue length, timestamps and the last error. Live state is this server's; a session run by another throng " +
+                "queue length, accepts_messages (false: send_message to it fails), timestamps and the last error. Live state is this server's; a session run by another throng " +
                 'instance shows what its record says.',
             inputSchema: {},
         },

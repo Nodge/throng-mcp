@@ -10,6 +10,7 @@ import { log } from '../log.ts';
 import { runThronglet } from '../mcp/tools/run-thronglet.ts';
 import { sendMessage } from '../mcp/tools/send-message.ts';
 import type { RunOutcome } from '../run.ts';
+import { readSessionRecord } from '../sessions.ts';
 
 // The gemini harness end to end on the fake agent's gemini scenarios (DESIGN §2.3, §4.1, §5).
 
@@ -124,7 +125,29 @@ describe('gemini harness (fake agent)', () => {
         }
     });
 
-    it('send_message to a gemini session → session_not_found: no session/resume', async () => {
+    it('a gemini session is recorded as not resumable; send_message is refused before a spawn', async () => {
+        const callLog = join(mkdtempSync(join(h.root, 'calls-')), 'calls.jsonl');
+        const { loaded } = h.fakeAs('gemini', 'gemini', '', { FAKE_CALL_LOG: callLog });
+        const ctx = h.makeCtx(loaded);
+        const first = ok(await runThronglet(input('gemini/gemini-2.5-pro'), ctx));
+        const record = await readSessionRecord(ctx.cacheDir, first.session_id);
+        expect(record?.resumable).toBe(false);
+        const starts = () => readFakeCalls(callLog).filter(c => c.event === 'start').length;
+        expect(starts()).toBe(1);
+
+        const payload = failed(
+            await sendMessage({ session_id: first.session_id, prompt: 'x' }, ctx),
+            'session_not_found'
+        );
+        expect(payload.message).toBe(
+            `session ${first.session_id} cannot take another message: the gemini harness has no session/resume, so its sessions are one turn`
+        );
+        expect(payload.session_id).toBe(undefined);
+        expect(starts(), 'no adapter process for the refused message').toBe(1);
+        expect(await readSessionRecord(ctx.cacheDir, first.session_id)).toStrictEqual(record);
+    });
+
+    it('send_message to a gemini session from an old record (no resumable) → session_not_found at the handshake', async () => {
         const { loaded, tag } = h.fakeAs('gemini', 'gemini');
         const ctx = h.makeCtx(loaded);
         await h.record(ctx.cacheDir, 'gemini-a', { harness: 'gemini', model: 'gemini-2.5-pro' });

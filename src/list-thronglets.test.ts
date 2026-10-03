@@ -142,6 +142,19 @@ describe('listThronglets', () => {
         expect(tagAlive(hang.tag)).toBe(false);
     });
 
+    it('accepts_messages: false only for a record that cannot resume', async () => {
+        const ctx = h.makeCtx(h.fakeClaude('echo').loaded);
+        await h.record(ctx.cacheDir, 'fake-one-turn', { resumable: false });
+        await h.record(ctx.cacheDir, 'fake-resumable', { resumable: true });
+        await h.record(ctx.cacheDir, 'fake-old');
+        const { thronglets } = await listThronglets(ctx.cacheDir, ctx.sessions);
+        expect(Object.fromEntries(thronglets.map(t => [t.session_id, t.accepts_messages]))).toStrictEqual({
+            'fake-one-turn': false,
+            'fake-resumable': true,
+            'fake-old': true,
+        });
+    });
+
     it('no sessions directory → empty list', async () => {
         const ctx = h.makeCtx(h.fakeClaude('echo').loaded);
         expect(await listThronglets(ctx.cacheDir, ctx.sessions)).toStrictEqual({ thronglets: [] });

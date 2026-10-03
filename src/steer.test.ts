@@ -188,6 +188,36 @@ describe('send_message steer', () => {
         await Promise.all(runs);
     });
 
+    it('a session that cannot resume: refused before the steer, the running turn completes', async () => {
+        const sessions = new SessionRegistry();
+        const cacheDir = mkdtempSync(join(h.root, 'cache-'));
+        const { loaded, tag } = h.fakeClaude('no-resume', '', { FAKE_TURN_MS: '1500' });
+        let id: string | undefined;
+        const run = runThronglet(
+            { agent: 'claude/fake-small', prompt: 'one turn', cwd: h.work, description: 'steer' },
+            h.makeCtx(loaded, { sessions, cacheDir, onTurnStarted: sessionId => (id = sessionId) })
+        );
+        await waitFor('first turn', () => id !== undefined);
+        if (id === undefined) expect.unreachable();
+        expect((await readSessionRecord(cacheDir, id))?.resumable).toBe(false);
+
+        const steered = await sendMessage(
+            { session_id: id, prompt: 'new direction', steer: true },
+            h.makeCtx(loaded, { sessions, cacheDir })
+        );
+        expect(code(steered)).toBe('session_not_found');
+        expect(text(steered)).toMatch(/cannot take another message/);
+        expect(sessions.busy(id), 'the running turn is still on').toBe(true);
+
+        const out = await run;
+        expect(code(out)).toBe('ok');
+        expect(text(out)).toMatch(/^echo: .*one turn/s);
+        const record = await readSessionRecord(cacheDir, id);
+        expect(record?.last_result).toStrictEqual((out as { payload: RunSuccess }).payload);
+        expect(record?.last_error).toBeUndefined();
+        expect(tagAlive(tag)).toBe(false);
+    });
+
     it('cancel_thronglet after a steer aborts the steered turn and the waiters', async () => {
         const box = sandbox();
         const first = await hangingRun(box);

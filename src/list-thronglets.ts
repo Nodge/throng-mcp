@@ -35,6 +35,7 @@ async function row(cacheDir: string, id: string, sessions: SessionRegistry): Pro
             cwd: record.cwd,
             state: resolved.state,
             queued: resolved.queued,
+            accepts_messages: record.resumable !== false,
             created_at: record.created_at,
             last_used_at: record.last_used_at,
         };

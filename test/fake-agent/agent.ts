@@ -28,7 +28,7 @@ const gemini = scenario.startsWith('gemini');
 const turnScenario = gemini ? scenario.replace(/^gemini-?/, '') || 'echo' : scenario;
 /** Gemini CLI's own model list; set_model accepts any string anyway, like the real one. */
 const GEMINI_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash'] as const;
-/** FAKE_TURN_MS: an echo turn takes this long before answering (a cancel cuts it short); 0 by default. */
+/** FAKE_TURN_MS: an echo or no-resume turn takes this long before answering (a cancel cuts it short); 0 by default. */
 const turnMs = Number(process.env.FAKE_TURN_MS ?? 0);
 /** FAKE_CONFIG_OPTIONS: extra options (JSON `SessionConfigOption[]`) every session advertises after model and effort. */
 const extraOptions = process.env.FAKE_CONFIG_OPTIONS;
@@ -333,6 +333,7 @@ async function runTurn(sessionId: string, text: string, client: AgentContext, si
             return;
         }
         case 'echo':
+        case 'no-resume':
             if (turnMs > 0) await sleep(turnMs, signal);
             break;
         case 'hang':

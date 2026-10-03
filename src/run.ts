@@ -305,6 +305,7 @@ export async function runCall(call: Call, ctx: RunContext): Promise<RunOutcome> 
                 description: request.description,
                 created_at: createdAt,
                 last_used_at: createdAt,
+                resumable: worker.session.agentCapabilities?.sessionCapabilities?.resume != null,
                 turn_started_at: createdAt,
                 turn_pid: process.pid,
             }).catch((err: unknown) => {

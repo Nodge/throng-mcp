@@ -51,6 +51,8 @@ export interface ThrongletInfo {
     cwd: string;
     state: SessionState;
     queued: number;
+    /** `false`: the harness cannot resume a session, so `send_message` to it fails with `session_not_found`. */
+    accepts_messages: boolean;
     created_at: string;
     last_used_at: string;
     /** When `failed`. */

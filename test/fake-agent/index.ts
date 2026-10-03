@@ -34,8 +34,8 @@ export type FakeScenario =
     | 'gemini-permission'
     | 'gemini-write-pong';
 
-// Knobs besides FAKE_SCENARIO (env of the agent process): FAKE_TURN_MS — an echo turn takes that long before answering
-// (default 0); FAKE_MEMORY_DIR — where resume-memory and steer keep their notes; FAKE_SUBMIT — the valid submit_result (JSON);
+// Knobs besides FAKE_SCENARIO (env of the agent process): FAKE_TURN_MS — an echo or no-resume turn takes that long
+// before answering (default 0); FAKE_MEMORY_DIR — where resume-memory and steer keep their notes; FAKE_SUBMIT — the valid submit_result (JSON);
 // FAKE_CONFIG_OPTIONS — extra `SessionConfigOption[]` (JSON) every session/new and session/resume advertises, select or
 // boolean; FAKE_CALL_LOG — a file the process appends a `FakeCall` JSON line to for its start (argv, and the
 // GEMINI_CLI_TRUST_WORKSPACE it sees when set), every set_mode, set_config_option (rejected ones included), set_model

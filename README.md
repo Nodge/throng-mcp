@@ -112,7 +112,7 @@ gemini
 
 Run `gemini` once and sign in; the nested agent uses that login. Checked against Gemini CLI 0.61.0 only up to the first model request (handshake, models, modes); a full turn has not been run yet, so expect rough edges and please report them. Limits:
 
-- One turn per session: Gemini CLI can't resume a session, so `send_message` to it fails with `session_not_found`. With `steer: true` it cancels the running turn first and then fails the same way; to stop a gemini turn, use `cancel_thronglet` and start a new run.
+- One turn per session: Gemini CLI can't resume a session, so `send_message` to it fails with `session_not_found` before anything runs. `steer: true` is refused the same way and leaves the running turn alone; to stop a gemini turn, use `cancel_thronglet` and start a new run. `list_thronglets` shows such a session with `accepts_messages: false`.
 - No effort levels: a `:<effort>` suffix is ignored with a warning.
 - No usage numbers: the result's `usage` stays empty.
 - The `cwd` you give it is trusted for the run (`GEMINI_CLI_TRUST_WORKSPACE=true`), under every permission policy.

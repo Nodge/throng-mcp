@@ -209,7 +209,18 @@ describe('runThronglet', () => {
         expect(record.cwd).toBe(work);
         expect(record.description).toBe('test run');
         expect(record.effort).toBe(undefined);
+        expect(record.resumable).toBe(true);
         expect(Date.parse(record.created_at) <= Date.parse(record.last_used_at)).toBe(true);
+    });
+
+    it('an adapter without the resume capability → the record says resumable: false', async () => {
+        const { loaded } = fakeClaude('no-resume');
+        const ctx = makeCtx(loaded);
+        const payload = ok(await runThronglet(input('claude/fake-small'), ctx));
+        const record = JSON.parse(
+            readFileSync(join(ctx.cacheDir, 'sessions', `${payload.session_id}.json`), 'utf8')
+        ) as SessionRecord;
+        expect(record.resumable).toBe(false);
     });
 
     it('model and effort from the agent spec', async () => {
@@ -805,7 +816,37 @@ describe('sendMessage', () => {
         ).toMatch(/unreadable/);
     });
 
-    it('harness without resume capability → session_not_found', async () => {
+    it('record with resumable: false → session_not_found before spawn, record untouched', async () => {
+        const callLog = join(mkdtempSync(join(root, 'calls-')), 'calls.jsonl');
+        const { loaded } = fakeClaude('echo', '', { FAKE_CALL_LOG: callLog });
+        const ctx = makeCtx(loaded);
+        await record(ctx, 'fake-one-turn', { resumable: false });
+        const path = join(ctx.cacheDir, 'sessions', 'fake-one-turn.json');
+        const before = readFileSync(path, 'utf8');
+        for (const steer of [false, true]) {
+            const payload = failed(
+                await sendMessage({ session_id: 'fake-one-turn', prompt: 'x', ...(steer ? { steer } : {}) }, ctx),
+                'session_not_found'
+            );
+            expect(payload.message).toBe(
+                'session fake-one-turn cannot take another message: the claude harness has no session/resume, so its sessions are one turn'
+            );
+            expect(payload.session_id).toBe(undefined);
+        }
+        expect(readFakeCalls(callLog), 'no adapter process spawned').toStrictEqual([]);
+        expect(readFileSync(path, 'utf8')).toBe(before);
+        expect(ctx.sessions.busy('fake-one-turn')).toBe(false);
+    });
+
+    it('resumable: true → the session resumes', async () => {
+        const { loaded } = fakeClaude('echo');
+        const ctx = makeCtx(loaded);
+        await record(ctx, 'fake-resumable', { resumable: true });
+        const payload = ok(await sendMessage({ session_id: 'fake-resumable', prompt: 'x' }, ctx));
+        expect(payload.text).toMatch(/^resumed: echo: /);
+    });
+
+    it('old record without resumable, harness without resume capability → session_not_found at the handshake', async () => {
         const { loaded, tag } = fakeClaude('no-resume');
         const ctx = makeCtx(loaded);
         await record(ctx, 'fake-a');

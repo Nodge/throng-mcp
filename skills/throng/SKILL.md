@@ -57,7 +57,7 @@ What a thronglet may do on disk comes from the throng config (`permissions:` in 
 |---|---|
 | `harness_unavailable`, `model_rejected` | the message says what is missing or lists the valid values; fix the spec, or tell the user what to install or fix in the config |
 | `depth_exceeded` | nesting is at `limits.max_depth`; do the work yourself |
-| `session_not_found` | the id is wrong, the record expired (14 days) or the harness can't resume it; `list_thronglets` has the live ones |
+| `session_not_found` | the id is wrong, the record expired (14 days) or the harness can't resume it; `list_thronglets` has the live ones, and `accepts_messages: false` marks a session that takes no further message |
 | `timeout` | the turn outlived `timeout_s` and was cancelled; the session exists: `send_message` "continue", with a larger `timeout_s` if the work needs it |
 | `cancelled` | the turn was cancelled; the message names the source: `cancel_thronglet`, a `steer`, the client, or the agent itself |
 | `transport_lost` | the adapter or the server running the turn died; messages queued behind it are lost; with a `session_id`, `send_message` can resume the session; otherwise start again |
