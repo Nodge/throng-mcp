@@ -1,6 +1,6 @@
 {
     "name": "throng-mcp",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "MCP server that delegates work to another agent harness or model over ACP",
     "license": "MIT",
     "author": "Maksim Zemskov <maxaz74@gmail.com>",
