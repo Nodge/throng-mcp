@@ -51,8 +51,8 @@ pnpm smoke:codex           # codex/gpt-6-luna
 pnpm smoke:codex-schema    # codex/gpt-6-luna with --schema
 pnpm smoke:opencode        # opencode/openrouter/z-ai/glm-5.3-flash (needs openrouter configured in opencode)
 pnpm smoke:opencode-schema # opencode/openrouter/z-ai/glm-5.3-flash with --schema
-pnpm smoke:gemini          # gemini/gemini-2.5-flash (follow-up skipped: gemini has no session/resume)
-pnpm smoke:gemini-schema   # gemini/gemini-2.5-flash with --schema
+pnpm smoke:gemini          # gemini/auto (follow-up skipped: gemini has no session/resume)
+pnpm smoke:gemini-schema   # gemini/auto with --schema
 pnpm smoke opencode/<provider>/<model>                  # custom provider
 pnpm smoke:claude -- --prompt "…" --cwd /some/dir --timeout 600
 pnpm smoke:claude -- --no-follow-up                    # skip the send_message step
@@ -85,8 +85,8 @@ THRONG_MCP_CONFIG=/tmp/throng-auto.yaml pnpm smoke:gemini
 printf 'permissions: deny_all\n' > /tmp/throng-deny.yaml
 THRONG_MCP_CONFIG=/tmp/throng-deny.yaml pnpm smoke:gemini
 
-# 3. model and effort: the run uses gemini-2.5-flash, warnings has `effort "high" ignored: gemini exposes no effort option`
-pnpm smoke gemini/gemini-2.5-flash:high
+# 3. model and effort: the run uses the model `auto`, warnings has `effort "high" ignored: gemini exposes no effort option`
+pnpm smoke gemini/auto:high
 ```
 
 Runs 1 and 2 replace your own config for that run, so a `permissions` line of yours can't change the mode; if it sets anything else you need (e.g. `harnesses.gemini.command`), copy it into the file.

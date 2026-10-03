@@ -25,6 +25,16 @@ describe('collector', () => {
         expect(c.text).toBe('second');
     });
 
+    it("Gemini CLI's set_mode echo before the turn is dropped", () => {
+        const c = new Collector();
+        c.handle(text('[MODE_UPDATE] yolo'));
+        c.startTurn();
+        c.handle(text('done'));
+        c.endTurn(stop());
+        expect(c.text).toBe('done');
+        expect(c.warnings).toStrictEqual([]);
+    });
+
     it('agent text before the turn becomes a warning, not text', () => {
         const c = new Collector();
         c.handle(text('Auto mode unavailable; using Accept edits instead.'));

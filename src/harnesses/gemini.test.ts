@@ -66,6 +66,7 @@ describe('gemini harness (fake agent)', () => {
         it(`${policy} → mode ${mode}, workspace trusted`, async () => {
             const { outcome, calls } = await geminiRun('gemini/gemini-2.5-pro', policy);
             ok(outcome);
+            expect(outcome.payload.warnings).toBe(undefined);
             expect(summary(calls)).toStrictEqual([
                 'start trust=true',
                 `set_mode ${mode}`,

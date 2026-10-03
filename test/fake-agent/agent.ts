@@ -509,6 +509,16 @@ app.onRequest('session/new', async ctx => {
             return {};
         }
         session.modeId = ctx.params.modeId;
+        if (gemini) {
+            // Gemini CLI 0.61.0 echoes the new mode as plain agent text.
+            await ctx.client.notify(acp.methods.client.session.update, {
+                sessionId: ctx.params.sessionId,
+                update: {
+                    sessionUpdate: 'agent_message_chunk',
+                    content: { type: 'text', text: `[MODE_UPDATE] ${ctx.params.modeId}` },
+                },
+            });
+        }
         return {};
     })
     .onRequest('session/set_config_option', ctx => {

@@ -3,6 +3,9 @@ import type { Usage } from '../contract.ts';
 
 // Folds the session/update stream and prompt responses into the run result (DESIGN §4.3).
 
+/** Gemini CLI answers every set_mode with this agent message; it repeats what throng just asked for. */
+const MODE_ECHO = /^\[MODE_UPDATE\] \S+$/;
+
 export class Collector {
     #text = '';
     /** Agent text received outside a prompt turn. */
@@ -30,7 +33,7 @@ export class Collector {
             case 'agent_message_chunk':
                 if (update.content.type === 'text') {
                     if (this.#inTurn) this.#text += update.content.text;
-                    else this.#preTurn += update.content.text;
+                    else if (!MODE_ECHO.test(update.content.text)) this.#preTurn += update.content.text;
                 }
                 break;
             case 'tool_call':

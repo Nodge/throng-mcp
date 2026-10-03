@@ -50,10 +50,10 @@ OpenCode 1.18.x (`opencode acp`):
 - Quirk: after an approved `edit` OpenCode calls client `fs/write_text_file` without checking the capability and ignores the error.
 - Custom providers live in the user's `~/.config/opencode/opencode.json`; the server doesn't touch it.
 
-Gemini CLI 0.61.0 (`gemini --acp`; facts read from the source on 2026-10-03, bundled ACP SDK 0.16.1):
+Gemini CLI 0.61.0 (`gemini --acp`; facts read from the source on 2026-10-03, bundled ACP SDK 0.16.1; handshake, modes, trust and `set_model` also checked live with an invalid API key, a real model turn was never run):
 - No config options at all. Models come through the unstable `models` field of `session/new` (`availableModels[].modelId`, `currentModelId`; the list depends on the account, `auto` is always there) and are set with the unstable `session/set_model`, which accepts any string without checking. No effort knob over ACP.
 - No `session/resume` (no `sessionCapabilities`). `session/load` exists but replays the whole history as notifications and does not wait for the replay; throng doesn't use it.
-- Modes: `default | autoEdit | yolo | plan`. Folder trust is on by default: in an untrusted folder `set_mode yolo` fails and no MCP servers start, those from `session/new` included. `GEMINI_CLI_TRUST_WORKSPACE=true` trusts the folder for the process.
+- Modes: `default | autoEdit | yolo | plan`. Every `set_mode` is echoed as an agent message `[MODE_UPDATE] <mode>`, which the collector drops (§4.3). Folder trust is on by default: in an untrusted folder `set_mode yolo` fails and no MCP servers start, those from `session/new` included. `GEMINI_CLI_TRUST_WORKSPACE=true` trusts the folder for the process.
 - `request_permission` always offers `allow_once` and `reject_once`. In mode `default` read-only tools run without asking; edits, shell and MCP tools ask.
 - No `usage_update`, no `PromptResponse.usage`, no cost: token counts sit only in `PromptResponse._meta.quota`, which throng does not read.
 - Auth is Google-account OAuth, an API key or Vertex; `session/new` fails with `-32000` when there is none. The OAuth terms forbid using that login from third-party software, so Gemini is reached only through its own CLI.
@@ -349,6 +349,7 @@ Client methods `fs/*`, `terminal/*`: not advertised; if an agent calls them anyw
 
 From the `session/update` stream:
 - `agent_message_chunk` (text) of the current turn → `text`. Each new `prompt` resets the buffer; the last turn is returned.
+- `agent_message_chunk` outside a turn → `warnings` ("agent message before the task"), except Gemini CLI's `[MODE_UPDATE] <mode>` echo of `set_mode`, which is dropped.
 - `agent_thought_chunk`: ignored.
 - `tool_call` / `tool_call_update`: title → progress.
 - `usage_update` → `cost_usd` (last value; it's cumulative); `PromptResponse.usage` → tokens (summed across turns).

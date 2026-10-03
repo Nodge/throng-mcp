@@ -64,8 +64,8 @@
         "smoke:codex-schema": "node scripts/smoke/smoke.ts codex/gpt-6-luna --schema",
         "smoke:opencode": "node scripts/smoke/smoke.ts opencode/openrouter/z-ai/glm-5.3-flash",
         "smoke:opencode-schema": "node scripts/smoke/smoke.ts opencode/openrouter/z-ai/glm-5.3-flash --schema",
-        "smoke:gemini": "node scripts/smoke/smoke.ts gemini/gemini-2.5-flash",
-        "smoke:gemini-schema": "node scripts/smoke/smoke.ts gemini/gemini-2.5-flash --schema"
+        "smoke:gemini": "node scripts/smoke/smoke.ts gemini/auto",
+        "smoke:gemini-schema": "node scripts/smoke/smoke.ts gemini/auto --schema"
     },
     "devDependencies": {
         "@agentclientprotocol/sdk": "^1.5.0",
