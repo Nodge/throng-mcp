@@ -5,7 +5,7 @@
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Effort = (typeof EFFORT_LEVELS)[number];
 
-export const HARNESS_IDS = ['claude', 'codex', 'opencode'] as const;
+export const HARNESS_IDS = ['claude', 'codex', 'opencode', 'gemini'] as const;
 export type HarnessId = (typeof HARNESS_IDS)[number];
 
 export type StopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal';

@@ -23,6 +23,11 @@ import type { FakeCall } from './index.ts';
 // Every echo turn also sends `session_info_update` with `_meta.throngDepth` = the THRONG_MCP_DEPTH it sees.
 
 const scenario = process.env.FAKE_SCENARIO ?? 'echo';
+/** gemini-*: shaped like Gemini CLI's ACP mode; the turn itself is that of the scenario after the prefix. */
+const gemini = scenario.startsWith('gemini');
+const turnScenario = gemini ? scenario.replace(/^gemini-?/, '') || 'echo' : scenario;
+/** Gemini CLI's own model list; set_model accepts any string anyway, like the real one. */
+const GEMINI_MODELS = ['gemini-2.5-pro', 'gemini-2.5-flash'] as const;
 /** FAKE_TURN_MS: an echo turn takes this long before answering (a cancel cuts it short); 0 by default. */
 const turnMs = Number(process.env.FAKE_TURN_MS ?? 0);
 /** FAKE_CONFIG_OPTIONS: extra options (JSON `SessionConfigOption[]`) every session advertises after model and effort. */
@@ -34,7 +39,8 @@ function record(call: FakeCall): void {
     if (callLog) appendFileSync(callLog, `${JSON.stringify(call)}\n`);
 }
 
-record({ event: 'start', argv: process.argv.slice(2) });
+const trust = process.env.GEMINI_CLI_TRUST_WORKSPACE;
+record({ event: 'start', argv: process.argv.slice(2), ...(trust === undefined ? {} : { trustWorkspace: trust }) });
 /** FAKE_STDERR: a line written to stderr at startup, before the handshake. */
 if (process.env.FAKE_STDERR) process.stderr.write(`${process.env.FAKE_STDERR}\n`);
 
@@ -45,6 +51,8 @@ interface FakeSession {
     mcpServers: McpServer[];
     modeId: string;
     configOptions: SessionConfigOption[];
+    /** gemini-*: the model of `models`, changed by session/set_model. */
+    model?: string;
     cost: number;
     pending: AbortController | undefined;
     /** session/prompt calls so far, the current one included. */
@@ -115,10 +123,21 @@ function freshSession(resumed: boolean, cwd: string, mcpServers: McpServer[]): F
     };
     if (scenario === 'no-effort-option') session.configOptions = session.configOptions.filter(o => o.id !== 'effort');
     if (extraOptions) session.configOptions.push(...(JSON.parse(extraOptions) as SessionConfigOption[]));
+    if (gemini) {
+        session.modeId = 'default';
+        session.configOptions = [];
+        session.model = GEMINI_MODELS[0];
+    }
     return session;
 }
 
 function modes(session: FakeSession): SessionModeState {
+    if (gemini) {
+        return {
+            currentModeId: session.modeId,
+            availableModes: ['default', 'autoEdit', 'yolo', 'plan'].map(id => ({ id, name: id })),
+        };
+    }
     return {
         currentModeId: session.modeId,
         availableModes: [
@@ -138,7 +157,20 @@ function getSession(sessionId: string): FakeSession {
 
 function optionValue(session: FakeSession, id: string): string {
     const option = session.configOptions.find(o => o.id === id);
-    return option?.type === 'select' ? option.currentValue : '?';
+    if (option?.type === 'select') return option.currentValue;
+    return (id === 'model' ? session.model : undefined) ?? '?';
+}
+
+/** FAKE_MODELS: raw JSON sent as the `models` field instead of the real shape. */
+const rawModels = process.env.FAKE_MODELS;
+
+/** The unstable `models` field of the session response, as Gemini CLI sends it. */
+function models(session: FakeSession): unknown {
+    if (rawModels !== undefined) return JSON.parse(rawModels) as unknown;
+    return {
+        availableModels: GEMINI_MODELS.map(modelId => ({ modelId, name: modelId })),
+        currentModelId: session.model,
+    };
 }
 
 function selectValues(option: SessionConfigOption): string[] {
@@ -196,11 +228,14 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 async function runTurn(sessionId: string, text: string, client: AgentContext, signal: AbortSignal): Promise<void> {
     const session = getSession(sessionId);
-    const send = (update: SessionUpdate) => client.notify(acp.methods.client.session.update, { sessionId, update });
+    const send = async (update: SessionUpdate) => {
+        if (gemini && update.sessionUpdate === 'usage_update') return;
+        await client.notify(acp.methods.client.session.update, { sessionId, update });
+    };
     const say = (chunk: string) =>
         send({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: chunk } });
 
-    switch (scenario) {
+    switch (turnScenario) {
         case 'empty':
             return;
         case 'refuse':
@@ -424,7 +459,7 @@ app =
               protocolVersion: acp.PROTOCOL_VERSION,
               agentInfo: { name: 'fake-agent', version: '0.0.1' },
               agentCapabilities: {
-                  sessionCapabilities: scenario === 'no-resume' ? {} : { resume: {} },
+                  sessionCapabilities: scenario === 'no-resume' || gemini ? {} : { resume: {} },
                   promptCapabilities: {},
               },
           }));
@@ -434,6 +469,7 @@ app.onRequest('session/new', async ctx => {
     const session = freshSession(false, ctx.params.cwd, ctx.params.mcpServers);
     sessions.set(sessionId, session);
     await earlyUpdate(sessionId, ctx.client);
+    if (gemini) return { sessionId, modes: modes(session), models: models(session) };
     return { sessionId, modes: modes(session), configOptions: session.configOptions };
 })
     .onRequest('session/resume', async ctx => {
@@ -507,6 +543,16 @@ app.onRequest('session/new', async ctx => {
         option.currentValue = value;
         return { configOptions: session.configOptions };
     })
+    .onRequest(
+        'session/set_model',
+        params => params as { sessionId: string; modelId: string },
+        ctx => {
+            const session = getSession(ctx.params.sessionId);
+            record({ event: 'set_model', modelId: ctx.params.modelId, resumed: session.resumed });
+            session.model = ctx.params.modelId;
+            return {};
+        }
+    )
     .onRequest('session/prompt', async ctx => {
         const session = getSession(ctx.params.sessionId);
         session.pending?.abort();
@@ -524,10 +570,9 @@ app.onRequest('session/new', async ctx => {
             if (session.pending === controller) session.pending = undefined;
         }
         if (controller.signal.aborted) return { stopReason: 'cancelled' as const };
-        return {
-            stopReason: STOP_REASONS[scenario] ?? 'end_turn',
-            usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
-        };
+        const stopReason = STOP_REASONS[turnScenario] ?? 'end_turn';
+        if (gemini) return { stopReason };
+        return { stopReason, usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
     })
     .onNotification('session/cancel', ctx => {
         sessions.get(ctx.params.sessionId)?.pending?.abort();

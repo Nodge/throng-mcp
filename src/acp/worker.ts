@@ -12,6 +12,7 @@ import { type ErrorCode, ThrongError } from '../contract.ts';
 import { log } from '../log.ts';
 import { type AdapterProcess, killTree, snapshotDescendants, spawnAdapter } from './process.ts';
 import type {
+    SessionModels,
     SessionStart,
     StartWorker,
     Worker,
@@ -47,6 +48,9 @@ const UNADVERTISED_TERMINAL_METHODS = [
     acp.methods.client.terminal.waitForExit,
     acp.methods.client.terminal.kill,
 ] as const;
+
+/** Unstable in ACP v1 and absent from the SDK's typed methods; Gemini CLI selects its model this way (DESIGN §2.3). */
+const SET_MODEL_METHOD = 'session/set_model';
 
 type HandshakeStep = 'initialize' | 'session/new' | 'session/resume';
 
@@ -274,6 +278,13 @@ class AcpWorker implements Worker {
         );
     }
 
+    async setModel(modelId: string): Promise<void> {
+        await this.#call(SET_MODEL_METHOD, () =>
+            this.#connection.agent.request(SET_MODEL_METHOD, { sessionId: this.session.sessionId, modelId })
+        );
+        if (this.#session?.models) this.#session.models.current = modelId;
+    }
+
     async setConfigOption(configId: string, value: string | boolean): Promise<SessionConfigOption[]> {
         const response = await this.#call(acp.methods.agent.session.setConfigOption, () => {
             const { sessionId } = this.session;
@@ -381,14 +392,28 @@ export function withoutStderrTail(message: string): string {
 function buildSession(
     sessionId: string,
     init: InitializeResponse,
-    response: { modes?: WorkerSession['modes'] | null; configOptions?: SessionConfigOption[] | null }
+    response: { modes?: WorkerSession['modes'] | null; configOptions?: SessionConfigOption[] | null; models?: unknown }
 ): WorkerSession {
     const session: WorkerSession = { sessionId };
     if (init.agentInfo != null) session.agentInfo = init.agentInfo;
     if (init.agentCapabilities != null) session.agentCapabilities = init.agentCapabilities;
     if (response.modes != null) session.modes = response.modes;
     if (response.configOptions != null) session.configOptions = response.configOptions;
+    const models = parseModels(response.models);
+    if (models) session.models = models;
     return session;
+}
+
+/** `{ availableModels: [{ modelId }], currentModelId }`; the SDK schema doesn't know the field, so the shape is checked here. */
+function parseModels(raw: unknown): SessionModels | undefined {
+    if (typeof raw !== 'object' || raw === null) return undefined;
+    const { availableModels, currentModelId } = raw as { availableModels?: unknown; currentModelId?: unknown };
+    if (!Array.isArray(availableModels) || typeof currentModelId !== 'string') return undefined;
+    const available = availableModels.flatMap((model: unknown) => {
+        const id = (model as { modelId?: unknown } | null)?.modelId;
+        return typeof id === 'string' ? [id] : [];
+    });
+    return { current: currentModelId, available };
 }
 
 function describeRpcError(err: unknown): string {

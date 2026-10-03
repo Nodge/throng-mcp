@@ -29,6 +29,7 @@ import type {
 // With --steer the run goes to the background on a prompt that keeps it busy, and a send_message with `steer: true`
 // interrupts it (DESIGN §3.3): its reply must contain STEERED, then list_thronglets shows the session idle; the pong.txt
 // and follow-up checks are skipped.
+// Gemini CLI has no session/resume (DESIGN §2.3): for harness gemini the follow-up is skipped and --steer is a usage error.
 // Spends tokens: run by hand, one harness at a time. Exit: 0 pass, 1 any FAIL or tool error, 2 usage/availability.
 
 const USAGE =
@@ -49,10 +50,12 @@ const STEER_PROMPT = 'Stop what you are doing. Reply with exactly one line: "STE
 const FOLLOW_UP_PROMPT = 'Which file did you create in the previous step? Reply with the bare file name only.';
 const DEFAULT_TIMEOUT_S = 300;
 // submit-tool: the structured-output server the harness spawns; its argv carries the run's temp dir under our TMPDIR.
+// gemini.*--acp: a relaunched Gemini CLI may show its package entry (`…/gemini-cli/…/index.js --acp`), not `gemini --acp`.
 const ADAPTER_PATTERNS = [
     'claude-agent-acp',
     'codex-acp',
     'opencode acp',
+    'gemini.*--acp',
     `submit-tool\\.ts --schema ${escapeRegex(join(tmpdir(), 'throng-'))}`,
 ];
 const repo = resolve(fileURLToPath(new URL('../..', import.meta.url)));
@@ -98,6 +101,8 @@ try {
 } catch (err) {
     usage(err instanceof Error ? err.message : String(err));
 }
+const noResume = spec.harness === 'gemini';
+if (noResume && values.steer) usage('--steer needs send_message, which gemini does not support (no session/resume)');
 // A pong.txt left from an earlier run would make the file check pass without the agent writing anything.
 const userCwd = values.cwd === undefined ? undefined : resolve(values.cwd);
 if (userCwd && existsSync(join(userCwd, 'pong.txt')))
@@ -457,6 +462,8 @@ try {
 
         if (values['no-follow-up']) {
             console.log('   follow-up step skipped (--no-follow-up)');
+        } else if (noResume) {
+            console.log(`   follow-up step skipped: ${spec.harness} has no session/resume, so no send_message`);
         } else if (isError || !payload.session_id) {
             console.log('   follow-up step skipped: run_thronglet failed');
         } else {

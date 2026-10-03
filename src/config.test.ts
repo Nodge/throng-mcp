@@ -87,7 +87,7 @@ describe('loadConfig', () => {
     });
 
     it('reports schema violations with the field path, keeping defaults', () => {
-        const env = withFile('bad.yaml', 'permissions: yolo\nharnesses: { gemini: {} }\nlimits: { max_depth: -1 }\n');
+        const env = withFile('bad.yaml', 'permissions: yolo\nharnesses: { nope: {} }\nlimits: { max_depth: -1 }\n');
         const loaded = loadConfig(env);
         expect(loaded.config).toStrictEqual(DEFAULT_CONFIG);
         const error = loaded.error ?? '';

@@ -75,6 +75,7 @@ function assertInstallHints(unavailable: ListHarnessesOutput['unavailable'], har
         claude: 'claude-agent-acp not found on PATH; install: npm i -g @agentclientprotocol/claude-agent-acp',
         codex: 'codex-acp not found on PATH; install: npm i -g @agentclientprotocol/codex-acp',
         opencode: 'opencode not found on PATH; install: see https://opencode.ai/docs (binary install)',
+        gemini: 'gemini not found on PATH; install: npm i -g @google/gemini-cli',
     };
     for (const { harness, reason } of unavailable) expect(reason).toBe(hints[harness]);
 }
@@ -136,7 +137,7 @@ describe('mcp server over stdio', () => {
             'wait_thronglet',
         ]);
         expect(out.harnesses).toStrictEqual([]);
-        assertInstallHints(out.unavailable, ['claude', 'codex', 'opencode']);
+        assertInstallHints(out.unavailable, ['claude', 'codex', 'opencode', 'gemini']);
         expect(out.limits).toStrictEqual({
             max_concurrency: 10,
             max_depth: 2,
@@ -161,7 +162,7 @@ describe('mcp server over stdio', () => {
                 version: '0.0.1',
             },
         ]);
-        assertInstallHints(out.unavailable, ['codex', 'opencode']);
+        assertInstallHints(out.unavailable, ['codex', 'opencode', 'gemini']);
         expect(tagAlive(tag), 'probed fake agent still running').toBe(false);
     });
 
@@ -181,10 +182,10 @@ describe('mcp server over stdio', () => {
         );
         const { out } = await callListHarnesses(serverEnv({ THRONG_MCP_CONFIG: config }));
         expect(out.harnesses).toStrictEqual([]);
-        expect(out.unavailable.map(u => u.harness)).toStrictEqual(['claude', 'codex', 'opencode']);
+        expect(out.unavailable.map(u => u.harness)).toStrictEqual(['claude', 'codex', 'opencode', 'gemini']);
         const claude = out.unavailable[0]?.reason ?? '';
         expect(claude).toMatch(/did not answer initialize within 1000 ms/);
-        assertInstallHints(out.unavailable.slice(1), ['codex', 'opencode']);
+        assertInstallHints(out.unavailable.slice(1), ['codex', 'opencode', 'gemini']);
         expect(tagAlive(tag), 'timed-out fake agent still running').toBe(false);
     });
 
@@ -202,7 +203,7 @@ describe('mcp server over stdio', () => {
     it('reports a broken config in every unavailable reason', async () => {
         const config = writeConfig('broken.yaml', 'limits: [\n');
         const { out } = await callListHarnesses(serverEnv({ THRONG_MCP_CONFIG: config }));
-        expect(out.unavailable.length).toBe(3);
+        expect(out.unavailable.length).toBe(4);
         for (const { reason } of out.unavailable) {
             expect(reason.startsWith('config error: '), reason).toBe(true);
             expect(reason.includes(config), reason).toBe(true);

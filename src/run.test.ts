@@ -301,7 +301,7 @@ describe('runThronglet', () => {
 
     it('unknown harness → harness_unavailable', async () => {
         const { loaded } = fakeClaude('echo');
-        const payload = failed(await runThronglet(input('gemini/x'), makeCtx(loaded)), 'harness_unavailable');
+        const payload = failed(await runThronglet(input('nope/x'), makeCtx(loaded)), 'harness_unavailable');
         expect(payload.session_id).toBe(undefined);
     });
 
@@ -794,7 +794,7 @@ describe('sendMessage', () => {
         mkdirSync(join(ctx.cacheDir, 'sessions'));
         writeFileSync(
             join(ctx.cacheDir, 'sessions', 'fake-bad.json'),
-            JSON.stringify({ harness: 'gemini', model: 'x', cwd: work })
+            JSON.stringify({ harness: 'nope', model: 'x', cwd: work })
         );
         writeFileSync(join(ctx.cacheDir, 'sessions', 'fake-junk.json'), '{');
         expect(

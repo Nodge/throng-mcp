@@ -46,19 +46,20 @@ function tagAlive(tag: string): boolean {
     }
 }
 
-/** Env like src/mcp.test.ts serverEnv(), with `claude` pointed at the fake agent in `scenario`; `agentEnv` goes to the agent. */
+/** Env like src/mcp.test.ts serverEnv(), with `harness` pointed at the fake agent in `scenario`; `agentEnv` goes to the agent. */
 function smokeEnv(
     scenario: string,
     tag: string,
     path: string,
-    agentEnv: Record<string, string>
+    agentEnv: Record<string, string>,
+    harness: string
 ): Record<string, string> {
     const config = join(dir, `${tag}.yaml`);
     writeFileSync(
         config,
         [
             'harnesses:',
-            '  claude:',
+            `  ${harness}:`,
             `    command: ${JSON.stringify(process.execPath)}`,
             `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
             `    env: ${JSON.stringify({ FAKE_SCENARIO: scenario, ...agentEnv })}`,
@@ -76,7 +77,8 @@ function smoke(
     args: string[],
     scenario = 'echo',
     path = bin,
-    agentEnv: Record<string, string> = {}
+    agentEnv: Record<string, string> = {},
+    harness = 'claude'
 ): Promise<{ code: number | null; stdout: string; stderr: string; tag: string }> {
     const tag = `fake-agent-${randomUUID()}`;
     tags.push(tag);
@@ -84,7 +86,7 @@ function smoke(
         execFile(
             process.execPath,
             ['scripts/smoke/smoke.ts', ...args],
-            { cwd: repo, env: smokeEnv(scenario, tag, path, agentEnv), timeout: 60_000 },
+            { cwd: repo, env: smokeEnv(scenario, tag, path, agentEnv, harness), timeout: 60_000 },
             (err, stdout, stderr) => {
                 const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
                 resolve({ code, stdout, stderr, tag });
@@ -186,6 +188,35 @@ describe('smoke script against the fake agent', () => {
         expect(stdout).not.toMatch(/\. send_message/);
         expect(stdout).toMatch(/PASS: no orphans/);
         expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
+
+    it('gemini: the run passes, the follow-up is skipped for lack of session/resume', async () => {
+        const { code, stdout, stderr, tag } = await smoke(
+            ['gemini/gemini-2.5-flash', '--prompt', 'x'],
+            'gemini-write-pong',
+            bin,
+            {},
+            'gemini'
+        );
+        expect(code, stdout + stderr).toBe(0);
+        expect(stdout).toMatch(/PASS: pong\.txt written/);
+        expect(stdout).toMatch(/follow-up step skipped: gemini has no session\/resume, so no send_message/);
+        expect(stdout).not.toMatch(/\. send_message/);
+        expect(stdout).toMatch(/PASS: no orphans/);
+        expect(tagAlive(tag), 'fake agent left running').toBe(false);
+    });
+
+    it('gemini with --steer is a usage error', async () => {
+        const { code, stdout, stderr } = await smoke(
+            ['gemini/gemini-2.5-flash', '--steer'],
+            'gemini',
+            bin,
+            {},
+            'gemini'
+        );
+        expect(code, stdout + stderr).toBe(2);
+        expect(stderr).toMatch(/--steer needs send_message, which gemini does not support/);
+        expect(stdout).not.toMatch(/run_thronglet/);
     });
 
     it('fails when the run succeeds but no file is written', async () => {

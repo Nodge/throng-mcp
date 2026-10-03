@@ -6,6 +6,7 @@ import type { ConfigOptionValue, HarnessDefinition } from './types.ts';
 
 // Model/effort selection after the handshake (DESIGN §4.1). Options are found by `category`, never by id;
 // the permission policy's config options are the exception, set by the id the harness definition names.
+// An agent without a `model` option may list its models in `session.models` instead (Gemini CLI, DESIGN §2.3).
 
 /** Above this many models the rejection lists only the requested provider's ones. */
 const FULL_LIST_MAX = 40;
@@ -47,14 +48,24 @@ export function modelRejectedMessage(model: string, values: string[]): string {
     return `${head}; ${listed} ${tail}`;
 }
 
-/** Sets the `model` option strictly: a value the harness doesn't offer is `model_rejected`. */
+/**
+ * Sets the model strictly: through the `model` option, else through `session/set_model` when the session lists
+ * `models`. A value the harness doesn't offer is `model_rejected`.
+ */
 export async function selectModel(worker: Worker, model: string): Promise<void> {
     const option = optionByCategory(currentOptions(worker), 'model');
-    if (!option)
+    if (option) {
+        if (!option.values.includes(model))
+            throw new ThrongError('model_rejected', modelRejectedMessage(model, option.values));
+        await setOption(worker, option.id, model);
+        return;
+    }
+    const { models } = worker.session;
+    if (!models)
         throw new ThrongError('model_rejected', `cannot select model "${model}": harness exposes no model option`);
-    if (!option.values.includes(model))
-        throw new ThrongError('model_rejected', modelRejectedMessage(model, option.values));
-    await setOption(worker, option.id, model);
+    if (!models.available.includes(model))
+        throw new ThrongError('model_rejected', modelRejectedMessage(model, models.available));
+    await worker.setModel(model);
 }
 
 /**

@@ -50,6 +50,14 @@ OpenCode 1.18.x (`opencode acp`):
 - Quirk: after an approved `edit` OpenCode calls client `fs/write_text_file` without checking the capability and ignores the error.
 - Custom providers live in the user's `~/.config/opencode/opencode.json`; the server doesn't touch it.
 
+Gemini CLI 0.61.0 (`gemini --acp`; facts read from the source on 2026-10-03, bundled ACP SDK 0.16.1):
+- No config options at all. Models come through the unstable `models` field of `session/new` (`availableModels[].modelId`, `currentModelId`; the list depends on the account, `auto` is always there) and are set with the unstable `session/set_model`, which accepts any string without checking. No effort knob over ACP.
+- No `session/resume` (no `sessionCapabilities`). `session/load` exists but replays the whole history as notifications and does not wait for the replay; throng doesn't use it.
+- Modes: `default | autoEdit | yolo | plan`. Folder trust is on by default: in an untrusted folder `set_mode yolo` fails and no MCP servers start, those from `session/new` included. `GEMINI_CLI_TRUST_WORKSPACE=true` trusts the folder for the process.
+- `request_permission` always offers `allow_once` and `reject_once`. In mode `default` read-only tools run without asking; edits, shell and MCP tools ask.
+- No `usage_update`, no `PromptResponse.usage`, no cost: token counts sit only in `PromptResponse._meta.quota`, which throng does not read.
+- Auth is Google-account OAuth, an API key or Vertex; `session/new` fails with `-32000` when there is none. The OAuth terms forbid using that login from third-party software, so Gemini is reached only through its own CLI.
+
 ACP registry (`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`, format v1.0.0, 41 agents): `{id, name, version, description, distribution: npx{package,args,env} | binary{platform → {archive, cmd, args}}}`. Relevant ids: `claude-acp`, `codex-acp`, `opencode`. It gives launch commands only; model/effort/mode knobs differ per adapter.
 
 ### 2.4 Claude Code 2.1.282 as an MCP client
@@ -68,7 +76,7 @@ Consequence: wrapper subagents that shell out to a nested harness CLI aren't nee
 
 One string names harness, model and effort: `<harness>/<model>[:<effort>]`.
 
-- `claude/opus[1m]`, `claude/opus[1m]:max`, `codex/gpt-6-sol:xhigh`, `opencode/openrouter/moonshotai/kimi-k3:high`.
+- `claude/opus[1m]`, `claude/opus[1m]:max`, `codex/gpt-6-sol:xhigh`, `opencode/openrouter/moonshotai/kimi-k3:high`, `gemini/gemini-2.5-pro`.
 - First path segment is the harness; the rest up to the last `:` is the model as the harness understands it (for opencode that's already `provider/model`).
 - The `:<effort>` suffix is recognized only when it's one of `low | medium | high | xhigh | max`, so model names with their own `:tag` survive.
 
@@ -108,7 +116,7 @@ output (failure, MCP tool error: isError = true): {
 
 Both are a single JSON text block in `content[0].text`; no `structuredContent`, no `outputSchema`. Invalid input is rejected by the SDK's zod validation before our code runs (MCP SDK 1.30 reports it as a tool error whose text is the validation message, not the payload above); everything else that goes wrong is a tool error with the payload above, never an exception.
 
-`text` is the concatenated `agent_message_chunk`s of the last turn; `usage` tokens come from `PromptResponse.usage`, summed over the call's prompt turns, and `cost_usd` from `usage_update`, which claude and opencode send and codex doesn't (§4.3).
+`text` is the concatenated `agent_message_chunk`s of the last turn; `usage` tokens come from `PromptResponse.usage`, summed over the call's prompt turns, and `cost_usd` from `usage_update`, which claude and opencode send and codex doesn't (§4.3). Gemini CLI reports neither, so its `usage` stays empty.
 
 ```ts
 type ErrorCode =
@@ -145,7 +153,7 @@ input: {
 output: same as run_thronglet; session_id stays the same
 ```
 
-Harness, model, effort and `cwd` come from the session record (§8): the caller doesn't repeat them. Every turn runs in a fresh adapter process that picks the session up via `session/resume` (no history replay); the nested session keeps its own context. Since the adapter process is new, the permission mode, model and effort are applied again after `session/resume`, exactly as after `session/new`. Unknown id, or the harness can't resume → tool error `session_not_found`.
+Harness, model, effort and `cwd` come from the session record (§8): the caller doesn't repeat them. Every turn runs in a fresh adapter process that picks the session up via `session/resume` (no history replay); the nested session keeps its own context. Since the adapter process is new, the permission mode, model and effort are applied again after `session/resume`, exactly as after `session/new`. Unknown id, or the harness can't resume → tool error `session_not_found`. Gemini CLI has no `session/resume` (§2.3), so a gemini session is one turn: `send_message` to it always fails this way.
 
 **Queue.** Turns on one session are serialized by throng: a message that arrives while a turn runs waits for `stop` and starts the next turn, FIFO, one message = one turn with its own `schema` and `timeout_s`. Never two adapter processes on one session. The adapters don't serialize themselves: a concurrent `session/prompt` reaches the model in all three, but the request/response pairing breaks differently in each, and codex-acp never answers the first prompt (spike 2026-10-02, THRONG-9 notes). A synchronous `send_message` on a busy session waits in the queue (progress reports it) and returns when the session is idle again, like `wait_thronglet`. The wait counts toward neither `timeout_s` nor `duration_s`.
 
@@ -157,10 +165,10 @@ Harness, model, effort and `cwd` come from the session record (§8): the caller 
 input: {}
 output: {
   harnesses: Array<{
-    harness: 'claude' | 'codex' | 'opencode';
+    harness: 'claude' | 'codex' | 'opencode' | 'gemini';
     command: string[];       // what will actually be launched
     version?: string;        // adapter's initialize.agentInfo.version: adapters are user-installed, versions drift
-    models: string[];        // config option category 'model'
+    models: string[];        // config option category 'model'; without one, the session's `models` list (gemini)
     efforts: string[];       // config option category 'thought_level'; empty when the harness has none
   }>;
   unavailable: Array<{ harness: string; reason: string }>;   // adapter not found + install command, config error, probe failed
@@ -246,7 +254,7 @@ src/
   agent-spec.ts             — parse '<harness>/<model>[:<effort>]'
   harnesses/
     types.ts                — HarnessDefinition
-    claude.ts codex.ts opencode.ts
+    claude.ts codex.ts opencode.ts gemini.ts
     index.ts discovery.ts   — registry snapshot + PATH resolution + discovery
     select.ts               — model/effort selection by option category
   acp/
@@ -277,16 +285,18 @@ Layers: `mcp/` knows about MCP and nothing else calls it; `run.ts` gets progress
 
 throng-mcp ships no adapters and no harnesses (decision-3). The user installs both; throng finds them on PATH:
 
-| | claude | codex | opencode |
-|---|---|---|---|
-| registry id | `claude-acp` | `codex-acp` | `opencode` |
-| adapter on PATH | `claude-agent-acp` | `codex-acp` | `opencode acp` |
-| install hint | `npm i -g @agentclientprotocol/claude-agent-acp` | `npm i -g @agentclientprotocol/codex-acp` | opencode install docs |
-| harness on PATH | `claude` → `CLAUDE_CODE_EXECUTABLE` | `codex` → `CODEX_PATH` | same binary |
-| model | option category `model` | option category `model` | option category `model` |
-| effort | option `thought_level`; exact | `thought_level`; `max → xhigh` | `thought_level` if present; otherwise warning |
-| `auto` | mode `auto` | mode `agent` | opencode.json defaults |
-| `allow_all` / `deny_all` / `elicit` | mode `default` | mode `read-only` (asks the client) | `OPENCODE_CONFIG_CONTENT={"permission":"ask"}` |
+| | claude | codex | opencode | gemini |
+|---|---|---|---|---|
+| registry id | `claude-acp` | `codex-acp` | `opencode` | `gemini` |
+| adapter on PATH | `claude-agent-acp` | `codex-acp` | `opencode acp` | `gemini --acp` |
+| install hint | `npm i -g @agentclientprotocol/claude-agent-acp` | `npm i -g @agentclientprotocol/codex-acp` | opencode install docs | `npm i -g @google/gemini-cli` |
+| harness on PATH | `claude` → `CLAUDE_CODE_EXECUTABLE` | `codex` → `CODEX_PATH` | same binary | same binary |
+| model | option category `model` | option category `model` | option category `model` | `models` list + `session/set_model` |
+| effort | option `thought_level`; exact | `thought_level`; `max → xhigh` | `thought_level` if present; otherwise warning | none; always a warning |
+| `auto` | mode `auto` | mode `agent` | opencode.json defaults | mode `yolo` |
+| `allow_all` / `deny_all` / `elicit` | mode `default` | mode `read-only` (asks the client) | `OPENCODE_CONFIG_CONTENT={"permission":"ask"}` | mode `default` |
+
+Gemini runs with `GEMINI_CLI_TRUST_WORKSPACE=true` under every policy, not only `auto`: without it the folder is untrusted, `yolo` is refused and the `submit_result` server (§6) never starts. The caller chose `cwd`, and nobody is there to answer a trust dialog.
 
 Availability is decided by the adapter command only. Adapter not on PATH → `unavailable` with `reason` = `<command> not found on PATH; install: <hint>`, and `run_thronglet` fails with `harness_unavailable` and the same text before spawn. The harness binary is optional: when `claude`/`codex` is on PATH, its absolute path goes into `CLAUDE_CODE_EXECUTABLE`/`CODEX_PATH` (unless config sets them), so the adapter runs the user's installed and logged-in harness; otherwise the adapter falls back to its bundled platform package, and if that is missing too, the probe fails at handshake and the adapter's error lands in `reason`. Everything past "the command exists" is checked by the probe (§3.4), not by guessing.
 
@@ -298,7 +308,7 @@ Config (§8) can override `command`/`args`/`env` per harness, e.g. to point at a
 
 ```ts
 interface HarnessDefinition {                 // src/harnesses/types.ts
-  id: 'claude' | 'codex' | 'opencode';
+  id: 'claude' | 'codex' | 'opencode' | 'gemini';
   registryId: string;
   resolve(config, registry, env?): { available: true; launch: { command; args; env } } | { available: false; reason: string };
   mapEffort(level: Effort, options: string[]): string | undefined;   // our level → option value; undefined = not applicable → warning
@@ -314,7 +324,7 @@ interface HarnessDefinition {                 // src/harnesses/types.ts
 
 `permissionSetup` covers the ways agents switch approval: a session mode, env of the adapter process, `session/new._meta`, a config option (`allow_all=on`, `brave_mode=true`) and a launch flag. The mode is strict: failing to set it fails the run. `configOptions` are best effort: an option the agent does not advertise, or one it rejects, becomes a warning and the turn runs in whatever asking mode the agent is in, where the server's answers (§5) still hold the policy. `args` and `env` apply to the processes of a run; the `list_harnesses` probe has no policy and launches without them.
 
-Model is set strictly: the value must be in `options` of the matching config option, otherwise `model_rejected` with the list. Effort: `mapEffort` picks the option value; `undefined` → `warnings`, not an error.
+Model is set strictly: the value must be in `options` of the matching config option, otherwise `model_rejected` with the list. An agent without a `model` config option that lists models in the session's unstable `models` field (Gemini CLI) is checked against that list the same way and set with `session/set_model`; the config option wins when both exist. Effort: `mapEffort` picks the option value; `undefined` → `warnings`, not an error.
 
 ### 4.2 Worker (acp/worker.ts)
 
@@ -324,7 +334,7 @@ Sequence:
 1. `spawn` (detached, own group, `stdio: [pipe, pipe, pipe]`, stderr → 64 KB ring buffer for error messages). `THRONG_MCP_DEPTH = depth + 1` in the child env.
 2. `connectWith(ndJsonStream)`, `initialize` (`clientCapabilities: { fs: {readTextFile:false, writeTextFile:false}, terminal:false }`).
 3. `session/new { cwd, mcpServers }` (+ `_meta` from the harness), or `session/resume { sessionId, cwd, mcpServers }` for every later turn (requires `sessionCapabilities.resume`; unknown id → `session_not_found`). Steps 1–3 run under the handshake timeout (60 s) → `handshake_timeout`.
-4. Mode (`setSessionMode`), the policy's config options (§4.1), model, effort via `setSessionConfigOption`. Runs after `session/resume` as well: a fresh adapter process starts in its defaults.
+4. Mode (`setSessionMode`), the policy's config options (§4.1), model, effort via `setSessionConfigOption` (model via `session/set_model` for an agent that only has the `models` list). Runs after `session/resume` as well: a fresh adapter process starts in its defaults.
 5. `prompt` → `nextUpdate()` loop until `stop`. Every event → collector + progress.
 6. Structured-output re-prompts (§6): step 5 again.
 7. `close()`: close stdin, wait 5 s for exit, then `SIGTERM` to the group, 5 s more → `SIGKILL`; finish off the descendant snapshot (`pgrep -P`, recursive, taken before close).

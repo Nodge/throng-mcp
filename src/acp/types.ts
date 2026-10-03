@@ -54,6 +54,13 @@ export interface WorkerSession {
     modes?: SessionModeState;
     /** Refreshed by every `setConfigOption`: the agent returns the full list, and effort values may depend on the model. */
     configOptions?: SessionConfigOption[];
+    /** The unstable `models` field of the session response: how agents without a `model` config option list their models. */
+    models?: SessionModels;
+}
+
+export interface SessionModels {
+    current: string;
+    available: string[];
 }
 
 /**
@@ -66,6 +73,8 @@ export interface Worker {
     readonly session: WorkerSession;
     readonly pid: number;
     setMode(modeId: string): Promise<void>;
+    /** Unstable `session/set_model`, for agents that list models in `session.models`. The agent may accept any string: validate first. */
+    setModel(modelId: string): Promise<void>;
     /** A boolean `value` is sent as a boolean option's value. Returns the refreshed option list the agent sends back. */
     setConfigOption(configId: string, value: string | boolean): Promise<SessionConfigOption[]>;
     /** One turn: resolves when the agent reports `stop`; updates arrive through `onUpdate` meanwhile. */

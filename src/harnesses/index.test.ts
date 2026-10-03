@@ -41,7 +41,7 @@ function reasonOf(resolution: HarnessResolution): string {
     return resolution.available ? '' : resolution.reason;
 }
 
-const ALL_BINS = ['claude-agent-acp', 'claude', 'codex-acp', 'codex', 'opencode'];
+const ALL_BINS = ['claude-agent-acp', 'claude', 'codex-acp', 'codex', 'opencode', 'gemini'];
 
 describe('registry and PATH lookup', () => {
     it('loadRegistry reads data/registry.json once', () => {
@@ -75,6 +75,7 @@ describe('registry and PATH lookup', () => {
             'claude-acp',
             'codex-acp',
             'opencode',
+            'gemini',
         ]);
     });
 });
@@ -98,6 +99,11 @@ describe('resolve', () => {
             args: ['acp'],
             env: {},
         });
+        expect(launchOf(HARNESSES.gemini.resolve(DEFAULT_CONFIG, registry, env))).toStrictEqual({
+            command: join(dir, 'gemini'),
+            args: ['--acp'],
+            env: {},
+        });
     });
 
     it('adapter missing: unavailable with the install command from the registry', () => {
@@ -114,6 +120,9 @@ describe('resolve', () => {
         const opencode = reasonOf(HARNESSES.opencode.resolve(DEFAULT_CONFIG, registry, env));
         expect(opencode).toContain('opencode not found on PATH');
         expect(opencode).toContain('opencode.ai');
+
+        const gemini = reasonOf(HARNESSES.gemini.resolve(DEFAULT_CONFIG, registry, env));
+        expect(gemini).toBe('gemini not found on PATH; install: npm i -g @google/gemini-cli');
     });
 
     it('harness binary missing alone does not make the harness unavailable', () => {
@@ -203,10 +212,12 @@ describe('mapEffort', () => {
 describe('permissionSetup', () => {
     const policies: PermissionPolicy[] = ['auto', 'allow_all', 'deny_all', 'elicit'];
     const ask = { env: { OPENCODE_CONFIG_CONTENT: '{"permission":"ask"}' } };
+    const trust = { GEMINI_CLI_TRUST_WORKSPACE: 'true' };
     const expected = {
         claude: { auto: { modeId: 'auto' }, other: { modeId: 'default' } },
         codex: { auto: { modeId: 'agent' }, other: { modeId: 'read-only' } },
         opencode: { auto: {}, other: ask },
+        gemini: { auto: { modeId: 'yolo', env: trust }, other: { modeId: 'default', env: trust } },
     } as const;
 
     for (const id of HARNESS_IDS) {

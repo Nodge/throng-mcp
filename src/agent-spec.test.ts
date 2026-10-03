@@ -58,7 +58,7 @@ describe('parseAgentSpec', () => {
     }
 
     it('rejects an unknown or missing harness with harness_unavailable', () => {
-        assertThrongError(() => parseAgentSpec('gemini/pro'), 'harness_unavailable', ['"gemini"', ...HARNESS_IDS]);
+        assertThrongError(() => parseAgentSpec('nope/pro'), 'harness_unavailable', ['"nope"', ...HARNESS_IDS]);
         assertThrongError(() => parseAgentSpec('Claude/opus-5-5'), 'harness_unavailable', ['"Claude"']);
         assertThrongError(() => parseAgentSpec(''), 'harness_unavailable', ['""']);
         assertThrongError(() => parseAgentSpec('/opus-5-5'), 'harness_unavailable', ['""']);

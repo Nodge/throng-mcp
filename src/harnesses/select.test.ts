@@ -158,6 +158,32 @@ describe('selectModel / selectEffort (fake agent)', () => {
         });
     });
 
+    it('selectModel without a model option: a listed model goes through session/set_model', async () => {
+        await withWorker('gemini', async (worker, turn) => {
+            await selectModel(worker, 'gemini-2.5-flash');
+            expect(worker.session.models?.current).toBe('gemini-2.5-flash');
+            expect(await turn('hi')).toBe('echo: hi [model=gemini-2.5-flash effort=?]');
+        });
+    });
+
+    it('selectModel without a model option: an unlisted model is rejected with the listed ones', async () => {
+        await withWorker('gemini', async (worker, turn) => {
+            const err = await rejectsWith(selectModel(worker, 'gemini-9'), 'model_rejected');
+            expect(err.message).toBe(
+                'model "gemini-9" is not available; valid models: gemini-2.5-pro, gemini-2.5-flash'
+            );
+            expect(await turn('hi')).toBe('echo: hi [model=gemini-2.5-pro effort=?]');
+        });
+    });
+
+    it('selectModel with neither a model option nor models → model_rejected', async () => {
+        await withWorker('gemini', async worker => {
+            delete worker.session.models;
+            const err = await rejectsWith(selectModel(worker, 'x'), 'model_rejected');
+            expect(err.message).toBe('cannot select model "x": harness exposes no model option');
+        });
+    });
+
     it('selectEffort sets an exact level without a warning', async () => {
         await withWorker('echo', async (worker, turn) => {
             expect(await selectEffort(HARNESSES.claude, worker, 'high')).toBe(undefined);
@@ -179,6 +205,14 @@ describe('selectModel / selectEffort (fake agent)', () => {
         await withWorker('no-effort-option', async worker => {
             const warning = await selectEffort(HARNESSES.opencode, worker, 'high');
             expect(warning).toBe('effort "high" ignored: opencode exposes no effort option');
+        });
+    });
+
+    it('selectEffort: gemini exposes no effort option', async () => {
+        await withWorker('gemini', async worker => {
+            expect(await selectEffort(HARNESSES.gemini, worker, 'high')).toBe(
+                'effort "high" ignored: gemini exposes no effort option'
+            );
         });
     });
 

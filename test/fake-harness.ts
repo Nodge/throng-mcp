@@ -11,9 +11,10 @@ import { SessionRegistry } from '../src/registry.ts';
 import type { RunContext } from '../src/run.ts';
 import { Semaphore } from '../src/semaphore.ts';
 import { type SessionRecord, writeSessionRecord } from '../src/sessions.ts';
+import type { HarnessId } from '../src/contract.ts';
 import type { FakeScenario } from './fake-agent/index.ts';
 
-// A sandbox for runCall tests on the fake agent: temp root, PATH with only `node`, configs whose `claude` is the fake.
+// A sandbox for runCall tests on the fake agent: temp root, PATH with only `node`, configs whose harness is the fake.
 
 const fakeAgent = fileURLToPath(new URL('./fake-agent/agent.ts', import.meta.url));
 /** RunContext.submitTool for tests: the source file, as `node src/mcp.ts` resolves it. */
@@ -25,6 +26,13 @@ export interface FakeHarness {
     work: string;
     /** Config whose `claude` harness is the fake agent in `scenario`; `agentEnv` is added to the adapter's env. */
     fakeClaude(
+        scenario: FakeScenario,
+        extra?: string,
+        agentEnv?: Record<string, string>
+    ): { loaded: LoadedConfig; tag: string };
+    /** `fakeClaude` for any harness id. */
+    fakeAs(
+        harness: HarnessId,
         scenario: FakeScenario,
         extra?: string,
         agentEnv?: Record<string, string>
@@ -46,29 +54,32 @@ export function fakeHarness(prefix: string): FakeHarness {
     mkdirSync(work);
     const tags: string[] = [];
 
+    const fakeAs: FakeHarness['fakeAs'] = (harness, scenario, extra = '', agentEnv = {}) => {
+        const tag = `fake-agent-${randomUUID()}`;
+        tags.push(tag);
+        const path = join(root, `config-${randomUUID()}.yaml`);
+        writeFileSync(
+            path,
+            [
+                'harnesses:',
+                `  ${harness}:`,
+                `    command: ${JSON.stringify(process.execPath)}`,
+                `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
+                `    env: ${JSON.stringify({ FAKE_SCENARIO: scenario, ...agentEnv })}`,
+                extra,
+                '',
+            ].join('\n')
+        );
+        const loaded = loadConfig({ THRONG_MCP_CONFIG: path });
+        expect(loaded.error, loaded.error).toBe(undefined);
+        return { loaded, tag };
+    };
+
     return {
         root,
         work,
-        fakeClaude(scenario, extra = '', agentEnv = {}) {
-            const tag = `fake-agent-${randomUUID()}`;
-            tags.push(tag);
-            const path = join(root, `config-${randomUUID()}.yaml`);
-            writeFileSync(
-                path,
-                [
-                    'harnesses:',
-                    '  claude:',
-                    `    command: ${JSON.stringify(process.execPath)}`,
-                    `    args: [${JSON.stringify(fakeAgent)}, "--tag=${tag}"]`,
-                    `    env: ${JSON.stringify({ FAKE_SCENARIO: scenario, ...agentEnv })}`,
-                    extra,
-                    '',
-                ].join('\n')
-            );
-            const loaded = loadConfig({ THRONG_MCP_CONFIG: path });
-            expect(loaded.error, loaded.error).toBe(undefined);
-            return { loaded, tag };
-        },
+        fakeClaude: (scenario, extra, agentEnv) => fakeAs('claude', scenario, extra, agentEnv),
+        fakeAs,
         makeCtx(loaded, overrides = {}) {
             return {
                 loaded,

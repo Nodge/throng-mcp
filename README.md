@@ -10,7 +10,7 @@ An MCP server that lets your agent hand work to another one. Any MCP client can 
 - **Background work.** Several agents run at once while you carry on.
 - **Answers by schema.** Pass a JSON Schema and the result comes back as data that fits it, not prose to parse: a list of findings, a verdict, a plan, ready to feed into the next step.
 
-Supported harnesses: Claude Code, Codex, OpenCode (and every model it can reach). Setup for each is under [Install](#2-the-agents-to-run).
+Supported harnesses: Claude Code, Codex, OpenCode (and every model it can reach), Gemini CLI. Setup for each is under [Install](#2-the-agents-to-run).
 
 ## Example
 
@@ -100,6 +100,25 @@ Custom providers live in your `~/.config/opencode/opencode.json`; throng doesn't
 
 </details>
 
+<details>
+<summary><strong>Gemini CLI</strong></summary>
+
+Gemini CLI speaks ACP itself (`gemini --acp`), so there is no adapter.
+
+```bash
+npm i -g @google/gemini-cli
+gemini
+```
+
+Run `gemini` once and sign in; the nested agent uses that login. Limits:
+
+- One turn per session: Gemini CLI can't resume a session, so `send_message` to it fails with `session_not_found`. With `steer: true` it cancels the running turn first and then fails the same way; to stop a gemini turn, use `cancel_thronglet` and start a new run.
+- No effort levels: a `:<effort>` suffix is ignored with a warning.
+- No usage numbers: the result's `usage` stays empty.
+- The `cwd` you give it is trusted for the run (`GEMINI_CLI_TRUST_WORKSPACE=true`), under every permission policy.
+
+</details>
+
 ### 3. The MCP client
 
 The client is the session that calls throng. It may be the same program as one of the agents above, or a different one. The server speaks stdio and the command is `npx -y throng-mcp`, or `throng-mcp` after a global install.
@@ -171,7 +190,7 @@ Agents pick skills up at session start, so open a new session after installing.
 
 ### Check
 
-In a new session, ask the agent to call `list_harnesses`. It starts each installed adapter without a prompt (seconds, no tokens) and lists every available harness with its models and effort levels; `unavailable` names what is missing and how to install it. If a run then fails during the handshake, the usual cause is auth: `claude auth status`, `codex login`, `opencode auth login`. More in [troubleshooting](docs/configuration.md#troubleshooting).
+In a new session, ask the agent to call `list_harnesses`. It starts each installed adapter without a prompt (seconds, no tokens) and lists every available harness with its models and effort levels; `unavailable` names what is missing and how to install it. If a run then fails during the handshake, the usual cause is auth: `claude auth status`, `codex login`, `opencode auth login`, `gemini` (sign in once). More in [troubleshooting](docs/configuration.md#troubleshooting).
 
 Before the first run, two things to know. The agent edits the directory you name, with your user's rights; throng adds no isolation and rolls nothing back. Give it only trees you would let an agent edit unattended, and give parallel writers a worktree each.
 
@@ -183,6 +202,7 @@ Before the first run, two things to know. The agent edits the directory you name
 claude/opus[1m]:max
 codex/gpt-6-sol:xhigh
 opencode/openrouter/z-ai/glm-5.3-flash
+gemini/gemini-2.5-pro
 ```
 
 The model is one of the harness's own values; `list_harnesses` has the current list. Effort is `low | medium | high | xhigh | max`; omitted means the harness default.
@@ -221,7 +241,7 @@ What a nested agent may do comes from the config file, never from a tool paramet
 permissions: auto
 ```
 
-- `auto`, the default: each harness runs in its own auto-approve mode (Claude `auto`, Codex `agent`, OpenCode as configured); whatever that mode still asks about, throng refuses.
+- `auto`, the default: each harness runs in its own auto-approve mode (Claude `auto`, Codex `agent`, OpenCode as configured, Gemini `yolo`); whatever that mode still asks about, throng refuses.
 - `allow_all`: every request allowed, once. `deny_all`: every request refused.
 - `elicit`: each request is shown to you as a dialog in the MCP client, with the one-time choices the harness offered. Needs a client with elicitation support; Claude Code has it.
 

@@ -193,6 +193,42 @@ describe('worker', () => {
         });
     });
 
+    it('models field: parsed from session/new, setModel updates current', async () => {
+        await withWorker('gemini', async h => {
+            expect(h.worker.session.configOptions).toBe(undefined);
+            expect(h.worker.session.models).toStrictEqual({
+                current: 'gemini-2.5-pro',
+                available: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+            });
+            await h.worker.setModel('gemini-2.5-flash');
+            expect(h.worker.session.models?.current).toBe('gemini-2.5-flash');
+            expect(await h.turn('hi')).toBe('echo: hi [model=gemini-2.5-flash effort=?]');
+        });
+    });
+
+    it('a malformed models field is ignored', async () => {
+        for (const raw of [
+            '"gemini-2.5-pro"',
+            '{"availableModels":"x","currentModelId":"a"}',
+            '{"availableModels":[]}',
+        ]) {
+            await withWorker('gemini', ({ worker }) => expect(worker.session.models, raw).toBe(undefined), {
+                env: { FAKE_MODELS: raw },
+            });
+        }
+        // Entries without a string modelId are dropped, the rest kept.
+        await withWorker(
+            'gemini',
+            ({ worker }) => expect(worker.session.models).toStrictEqual({ current: 'a', available: ['a'] }),
+            {
+                env: {
+                    FAKE_MODELS:
+                        '{"availableModels":[{"modelId":"a"},{"name":"b"},null,{"modelId":3}],"currentModelId":"a"}',
+                },
+            }
+        );
+    });
+
     it('setConfigOption with a boolean goes out as a boolean option value', async () => {
         const brave = { id: 'brave_mode', name: 'Brave mode', type: 'boolean', currentValue: false };
         await withWorker(

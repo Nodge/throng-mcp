@@ -1,6 +1,6 @@
 ---
 name: throng
-description: "Delegating work to another agent harness or model through throng (run_thronglet, send_message, wait_thronglet, list_thronglets, cancel_thronglet, list_harnesses). Use before any throng tool call, when a task should run on another model (codex, opus, gpt, glm) or get its review or opinion, and when running agents in parallel or in the background."
+description: "Delegating work to another agent harness or model through throng (run_thronglet, send_message, wait_thronglet, list_thronglets, cancel_thronglet, list_harnesses). Use before any throng tool call, when a task should run on another model (codex, opus, gpt, glm, gemini) or get its review or opinion, and when running agents in parallel or in the background."
 ---
 
 # Working with thronglets
@@ -9,7 +9,7 @@ A **thronglet** is a nested session of an agent harness that throng starts for y
 
 ## Choosing the agent
 
-`agent` is one string: `<harness>/<model>[:<effort>]`, e.g. `claude/opus[1m]:high`, `codex/gpt-6-sol:xhigh`, `opencode/openrouter/z-ai/glm-5.3-flash`. The model is a value the harness itself offers: `list_harnesses` returns them with the effort levels (it probes the adapters: seconds, no tokens), and a `model_rejected` message lists them too. Effort is `low | medium | high | xhigh | max`; omitted means the harness default.
+`agent` is one string: `<harness>/<model>[:<effort>]`, e.g. `claude/opus[1m]:high`, `codex/gpt-6-sol:xhigh`, `opencode/openrouter/z-ai/glm-5.3-flash`, `gemini/gemini-2.5-pro`. The model is a value the harness itself offers: `list_harnesses` returns them with the effort levels (it probes the adapters: seconds, no tokens), and a `model_rejected` message lists them too. Effort is `low | medium | high | xhigh | max`; omitted means the harness default.
 
 Pick another harness or model when the task gains from a different model's view (a second review, a design critique) or when the user names one. Same-vendor subagents of your own harness stay the cheaper default for plain parallel work.
 
@@ -21,7 +21,7 @@ Self-contained, written for a reader with no context: the task, the repository a
 
 ## One turn or a conversation
 
-`run_thronglet` creates the session and runs the first turn; `send_message` runs the next one in the same session, with the harness's own memory of the earlier turns. One message is one turn. Use a follow-up instead of a new run whenever the context already lives in the session: "now fix what you found", "the tests fail with this output, continue", a corrected structured result.
+`run_thronglet` creates the session and runs the first turn; `send_message` runs the next one in the same session, with the harness's own memory of the earlier turns. One message is one turn. Use a follow-up instead of a new run whenever the context already lives in the session: "now fix what you found", "the tests fail with this output, continue", a corrected structured result. Gemini CLI is the exception: it can't resume a session, so a gemini session is one turn and `send_message` to it fails with `session_not_found`; put everything into the first prompt, or start a new run with the earlier result in its prompt. Do not steer a gemini turn: `steer: true` cancels the running turn and then fails the same way, delivering nothing; use `cancel_thronglet` and a new run instead.
 
 Messages to a session whose turn is still running queue up and run in order; the queue lives in the server process and is lost if it dies. `steer: true` interrupts the running turn instead and runs your message next, ahead of the queue: the agent keeps its memory of what it was doing, the in-flight tool call is aborted and a half-applied edit may remain. Steer only when the correction cannot wait for the turn to end, e.g. "stop, do not touch the migrations".
 

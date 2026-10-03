@@ -42,11 +42,11 @@ export async function probeHarness(
             { onPermission: () => Promise.resolve({ outcome: { outcome: 'cancelled' } }) },
             { handshakeMs: opts.handshakeMs, exitGraceMs: 1000 }
         );
-        const { configOptions, agentInfo } = worker.session;
+        const { configOptions, agentInfo, models } = worker.session;
         const info: HarnessInfo = {
             harness: def.id,
             command: [launch.command, ...launch.args],
-            models: optionByCategory(configOptions, 'model')?.values ?? [],
+            models: optionByCategory(configOptions, 'model')?.values ?? models?.available ?? [],
             efforts: optionByCategory(configOptions, 'thought_level')?.values ?? [],
         };
         if (agentInfo?.version) info.version = agentInfo.version;
@@ -62,7 +62,7 @@ export async function probeHarness(
     }
 }
 
-/** A config error marks every harness unavailable without probing; otherwise all three are probed in parallel. */
+/** A config error marks every harness unavailable without probing; otherwise every harness is probed in parallel. */
 export async function listHarnesses(loaded: LoadedConfig, opts: ProbeOptions): Promise<ListHarnessesOutput> {
     const { config } = loaded;
     const limits = {

@@ -51,6 +51,8 @@ pnpm smoke:codex           # codex/gpt-6-luna
 pnpm smoke:codex-schema    # codex/gpt-6-luna with --schema
 pnpm smoke:opencode        # opencode/openrouter/z-ai/glm-5.3-flash (needs openrouter configured in opencode)
 pnpm smoke:opencode-schema # opencode/openrouter/z-ai/glm-5.3-flash with --schema
+pnpm smoke:gemini          # gemini/gemini-2.5-flash (follow-up skipped: gemini has no session/resume)
+pnpm smoke:gemini-schema   # gemini/gemini-2.5-flash with --schema
 pnpm smoke opencode/<provider>/<model>                  # custom provider
 pnpm smoke:claude -- --prompt "…" --cwd /some/dir --timeout 600
 pnpm smoke:claude -- --no-follow-up                    # skip the send_message step
@@ -64,17 +66,34 @@ The script starts the server, prints the `list_harnesses` table (versions, model
 
 - `PASS: pong.txt written` / `FAIL: …`: the file exists with content `pong`. The check runs with a custom `--prompt` too, so such a prompt should also write `pong.txt`. A `--cwd` that already contains `pong.txt` is refused (exit 2).
 - `PASS: structured is {file: pong.txt, content: pong}` / `FAIL: structured is …`: with `--schema` only; the run asks for the created file's name and content as structured output, and the payload's `structured` must match.
-- `PASS: send_message answered pong.txt` / `FAIL: send_message …`: a `send_message` into the same session asks which file it created; its payload is printed and the answer must mention `pong.txt`. Skipped when the run failed, or with `--no-follow-up` (e.g. with a custom `--prompt`).
+- `PASS: send_message answered pong.txt` / `FAIL: send_message …`: a `send_message` into the same session asks which file it created; its payload is printed and the answer must mention `pong.txt`. Skipped when the run failed, with `--no-follow-up` (e.g. with a custom `--prompt`), and for gemini, which can't resume a session (`follow-up step skipped: gemini has no session/resume, so no send_message`). `--steer` with gemini is a usage error.
 - `PASS: run_thronglet background accepted` / `PASS: send_message background accepted`: with `--background` only; the call answered `{session_id, state, queued}` (printed as `pending:`), and `wait_thronglet` then delivers the payload the checks above run on.
 - With `--cancel` instead of the pong.txt and follow-up checks: `PASS: run_thronglet background accepted`, `PASS: list_thronglets shows the turn running` (the row has description `smoke: ping/pong`), `PASS: cancel_thronglet cancelled the turn` (`cancelled_turn: true`), `PASS: wait_thronglet returned cancelled`, `PASS: list_thronglets shows the turn failed with cancelled`.
 - With `--steer` instead of the pong.txt and follow-up checks: `PASS: run_thronglet background accepted` (the prompt asks for `sleep 60` as one tool call, so there is a turn to interrupt), `PASS: send_message steer answered STEERED` (a synchronous `send_message` with `steer: true` asks for a line starting with STEERED and what the agent was doing; the payload is printed), `PASS: list_thronglets shows the session idle`.
-- `PASS: no orphans` / `FAIL: orphaned adapter processes: <pids>`: no new `claude-agent-acp`, `codex-acp`, `opencode acp` or `submit-tool` process is alive 3 s after the client closed. `FAIL: cannot check orphans (…)` when `pgrep` is missing or fails.
+- `PASS: no orphans` / `FAIL: orphaned adapter processes: <pids>`: no new `claude-agent-acp`, `codex-acp`, `opencode acp`, `gemini.*--acp` (regex) or `submit-tool` process is alive 3 s after the client closed. `FAIL: cannot check orphans (…)` when `pgrep` is missing or fails.
 
 Exit code: 0 all passed; 1 a FAIL or a tool error; 2 bad usage, harness unavailable or unknown model (the valid models are printed). Server stderr is prefixed `[server]`, progress `[progress]`. The temp dir is removed on success and kept (path printed) on failure.
 
+The smoke takes the permission policy from the throng config like the server does, so another policy is another config file through `THRONG_MCP_CONFIG`. The three Gemini CLI runs (after `npm i -g @google/gemini-cli` and signing in with `gemini`):
+
+```bash
+# 1. auto (mode yolo) edits a file: PASS: pong.txt written, the follow-up skipped
+printf 'permissions: auto\n' > /tmp/throng-auto.yaml
+THRONG_MCP_CONFIG=/tmp/throng-auto.yaml pnpm smoke:gemini
+
+# 2. deny_all (mode default) refuses the edit: the run succeeds, FAIL: pong.txt not found, exit 1 — the expected outcome
+printf 'permissions: deny_all\n' > /tmp/throng-deny.yaml
+THRONG_MCP_CONFIG=/tmp/throng-deny.yaml pnpm smoke:gemini
+
+# 3. model and effort: the run uses gemini-2.5-flash, warnings has `effort "high" ignored: gemini exposes no effort option`
+pnpm smoke gemini/gemini-2.5-flash:high
+```
+
+Runs 1 and 2 replace your own config for that run, so a `permissions` line of yours can't change the mode; if it sets anything else you need (e.g. `harnesses.gemini.command`), copy it into the file.
+
 Manual items that need an interactive Claude Code session:
 
-1. Esc during a running `run_thronglet`; afterwards `pgrep -f "claude-agent-acp|codex-acp|opencode acp"` prints nothing.
+1. Esc during a running `run_thronglet`; afterwards `pgrep -f "claude-agent-acp|codex-acp|opencode acp|gemini.*--acp"` prints nothing.
 2. A call over 2 min goes to the background: e.g. prompt `run sleep 150 in the shell, then reply done`; the result arrives as a notification.
 3. OpenCode with a custom provider from `opencode.json`.
 

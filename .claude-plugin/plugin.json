@@ -8,7 +8,7 @@
     "homepage": "https://github.com/Nodge/throng-mcp#readme",
     "repository": "https://github.com/Nodge/throng-mcp",
     "license": "MIT",
-    "keywords": ["mcp", "acp", "delegation", "subagents", "codex", "opencode"],
+    "keywords": ["mcp", "acp", "delegation", "subagents", "codex", "opencode", "gemini"],
     "mcpServers": {
         "throng": {
             "command": "npx",
