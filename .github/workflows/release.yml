@@ -18,9 +18,9 @@ jobs:
             id-token: write # to mint the OIDC token npm exchanges for publish rights
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v7
-            - uses: pnpm/action-setup@v6
-            - uses: actions/setup-node@v7
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+            - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+            - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
               with:
                   node-version: 24.x
                   cache: pnpm
@@ -28,7 +28,7 @@ jobs:
               run: pnpm install --frozen-lockfile
             - name: Create Release Pull Request or Publish to npm
               id: changesets
-              uses: changesets/action@v2
+              uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
               with:
                   pr-title: 'Upcoming Release'
                   commit-message: 'chore(release): version bump'
