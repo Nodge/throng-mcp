@@ -1,11 +1,11 @@
 ---
 id: THRONG-8
 title: Permission policies
-status: Review
+status: Done
 assignee:
   - '@nodge'
 created_date: '2026-09-27 18:56'
-updated_date: '2026-10-02 17:39'
+updated_date: '2026-10-03 09:29'
 labels: []
 milestone: m-1
 dependencies:
@@ -30,7 +30,7 @@ Scope: DESIGN §5.
 - [x] #2 `elicit` without the client capability fails with `elicitation_unsupported` before spawn; an unanswered elicitation times out to `cancelled`
 - [x] #3 Pending permission requests are answered `cancelled` on cancel
 - [x] #4 Tests use the fake-agent `permission` scenario and a fake MCP client with the capability
-- [ ] #5 Smoke: elicit from an interactive session
+- [x] #5 Smoke: elicit from an interactive session
 <!-- AC:END -->
 
 ## Definition of Done
@@ -134,10 +134,12 @@ Gates: `pnpm typecheck && pnpm lint && pnpm test`. Formatting via prettier in th
 When this lands, update the Permissions paragraph of skills/throng/SKILL.md (THRONG-14): it currently says only auto runs and other policies fail with harness_unavailable.
 
 task-cycle wf_5e15fef7-1f0: Opus coder, gates green (267 tests), Opus review 0 findings, Codex review 0 findings, 0 fix rounds. Spot-checked by the main session: src/permissions.ts (pick by kind, decideAllow fallback chain, elicit form schema with titled oneOf of *_once kinds, every ask failure → cancelled, bridge signal passed into ask), run.ts guard (elicitation_unsupported before the session lock, message names the config key), tools.ts (elicitation built per call from getClientCapabilities()?.elicitation?.form, shared by callRun and callBackground), stdio tests with a Client with/without the capability. Coder deviations accepted: capability check on .form (SDK normalizes elicitation: {} to {form: {}}; DESIGN §5 updated by the main session); fake agent gained mode 'default' (claude's asking mode); truncation at 2048 chars; progress 'permission: <title>' sent from run.ts onPermission. Outside the task, flagged by the coder: DESIGN §2.3 says opencode calls fs/write_text_file after an approved edit without checking the client capability — allow_all/elicit on opencode may not write the file; to check in the smoke.
+
+Smoke by nodge, 2026-10-03, interactive Claude Code session in a temp dir with a project-scope server `throng-elicit` (node src/mcp.ts at HEAD 4e6b810, THRONG_MCP_CONFIG with permissions: elicit, limits.elicitation_s: 60). All passed: (1) claude/sonnet, allow in the dialog → file written; (2) reject → no file, agent reported the refusal; (3) no answer → cancelled after 60 s, no file; (4) opencode/openrouter/z-ai/glm-5.3-flash, allow → file written (the DESIGN §2.3 concern does not apply: opencode writes the file itself). No orphaned adapter processes. Side effect seen in (4): opencode calls fs/write_text_file after the approved edit, we answer "method not found" and the call carries a warning; follow-up task created to drop that warning for fs/*.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-allow_all, deny_all and elicit run (src/permissions.ts deciderFor: pick by kind, *_once only; elicit asks the MCP client in form mode with a titled oneOf of the *_once kinds, every ask failure/timeout/bad answer → cancelled, bridge signal passed into ask); run.ts refuses elicit without the client capability with elicitation_unsupported before spawn, message names the config key; tools.ts builds the elicitation per call from getClientCapabilities()?.elicitation?.form (SDK normalizes elicitation: {} to {form: {}}; DESIGN §5 updated). README Permissions section, SKILL.md paragraph. Verified: tsc 0, eslint 0, vitest 267/267 incl. permissions.test deciders, run.test policies via the fake-agent permission scenario (timeout 0.2 s, cancel while pending, no spawn), two stdio tests with a Client with/without the elicitation capability. Reviewed by nodge in Sherpa, no code changes. Pending: maintainer smoke (AC #5), elicit from an interactive session — status Review.
+allow_all, deny_all and elicit run (src/permissions.ts deciderFor: pick by kind, *_once only; elicit asks the MCP client in form mode with a titled oneOf of the *_once kinds, every ask failure/timeout/bad answer → cancelled, bridge signal passed into ask); run.ts refuses elicit without the client capability with elicitation_unsupported before spawn, message names the config key; tools.ts builds the elicitation per call from getClientCapabilities()?.elicitation?.form (SDK normalizes elicitation: {} to {form: {}}; DESIGN §5 updated). README Permissions section, SKILL.md paragraph. Verified: tsc 0, eslint 0, vitest 267/267 incl. permissions.test deciders, run.test policies via the fake-agent permission scenario, two stdio tests with a Client with/without the elicitation capability; maintainer smoke 2026-10-03 from an interactive Claude Code session: allow, reject, timeout on claude and allow on opencode all passed.
 <!-- SECTION:FINAL_SUMMARY:END -->
