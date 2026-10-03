@@ -1,5 +1,17 @@
 # throng-mcp
 
+## 0.3.0
+
+### Minor Changes
+
+- [`4e6b810`](https://github.com/Nodge/throng-mcp/commit/4e6b810538b3ed288c266d1904739d1c1dda7a57) Thanks [@Nodge](https://github.com/Nodge)! - Claude Code plugin: `claude plugin marketplace add Nodge/throng-mcp`, then `claude plugin install throng@throng-mcp` installs the server and the skill together.
+
+### Patch Changes
+
+- [`ca5d875`](https://github.com/Nodge/throng-mcp/commit/ca5d8750a7cd26e4146473c9dcb230abac95b79f) Thanks [@Nodge](https://github.com/Nodge)! - An agent's `fs/*` call to throng (OpenCode sends `fs/write_text_file` after an approved edit) no longer adds a warning to the result; it is still answered "method not found" and logged to stderr. `terminal/*` calls keep the warning.
+
+- [`4e6b810`](https://github.com/Nodge/throng-mcp/commit/4e6b810538b3ed288c266d1904739d1c1dda7a57) Thanks [@Nodge](https://github.com/Nodge)! - The `run_thronglet` description no longer lists the harnesses or limits the work to coding; `list_harnesses` has the current set.
+
 ## 0.2.0
 
 ### Minor Changes
